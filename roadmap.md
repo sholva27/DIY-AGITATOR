@@ -19,3 +19,8 @@
 ## Phase 4: Hardware Prototyping
 - [ ] **Custom PCB:** Design an ESP32-S3 shield with built-in level shifters and buck converter.
 - [ ] **3D Printed Housing:** Create a water-resistant enclosure for lab environments.
+
+## Phase 5: Advanced Features (New Proposals)
+- [ ] **PID Implementation:** Closed-loop speed control.
+- [ ] **Decoupling Protection:** Auto-detect and reset when the magnet slips.
+- [ ] **Sensor Fusion:** Display temperature (DS18B20) and current (INA219) data.
