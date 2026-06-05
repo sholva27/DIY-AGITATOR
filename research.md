@@ -18,3 +18,7 @@
 ## 4. Communication Protocols
 - **ESP-NOW:** Peer-to-peer protocol by Espressif. No router required. Ideal for local bioreactor modules.
 - **I2C vs UART:** UART is more robust over longer cable lengths (up to 1-2 meters) compared to I2C (centimeters).
+
+## 5. Acceleration Ramping (Soft Start)
+- **Problem:** Sudden jumps in fan speed (e.g. 0% to 100%) create high inertia torque. Since the magnetic coupling between the fan and the stirrer bar has a limited force, the bar can "break free" and sit vibrating in the center.
+- **Solution:** Implementing a linear ramp (Soft Start). By gradually increasing the PWM duty cycle (e.g. 0.5% per 50ms), the stirrer bar can follow the magnetic field without decoupling.

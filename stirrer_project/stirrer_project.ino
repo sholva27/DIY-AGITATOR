@@ -51,7 +51,8 @@ unsigned long lastSecondUpdate = 0;
 bool isStirring = false;
 bool isTimerActive = false;
 bool editTimerMode = false; // Toggle between Speed and Timer set
-const float RAMP_STEP = 0.5;
+const float RAMP_STEP_UP = 0.5;   // Smoother acceleration to prevent decoupling
+const float RAMP_STEP_DOWN = 1.0; // Faster deceleration
 
 enum ControlMode { IDLE, LOCAL, REMOTE, SERIAL_CTL, STOPPED, DECOUPLED, TIMER_DONE };
 volatile ControlMode currentMode = IDLE;
@@ -274,13 +275,13 @@ void setup() {
 void loop() {
   handleSerial();
 
-  // Ramping Logic
+  // Ramping Logic (Soft Start / Smooth Stop)
   if (currentRampSpeed < (float)encoderValue) {
-    currentRampSpeed += RAMP_STEP;
+    currentRampSpeed += RAMP_STEP_UP;
     if (currentRampSpeed > (float)encoderValue) currentRampSpeed = (float)encoderValue;
     setFanSpeed((int)currentRampSpeed);
   } else if (currentRampSpeed > (float)encoderValue) {
-    currentRampSpeed -= RAMP_STEP * 2;
+    currentRampSpeed -= RAMP_STEP_DOWN;
     if (currentRampSpeed < (float)encoderValue) currentRampSpeed = (float)encoderValue;
     setFanSpeed((int)currentRampSpeed);
   }

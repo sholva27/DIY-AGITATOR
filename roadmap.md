@@ -8,7 +8,7 @@
 
 ## Phase 2: Software Refinement
 - [ ] **PID Speed Control:** Maintain constant RPM regardless of liquid viscosity.
-- [ ] **Ramp Up/Down:** Prevent the magnetic bar from decoupling during sudden speed changes.
+- [x] **Ramp Up/Down:** Prevent the magnetic bar from decoupling during sudden speed changes. (IMPLEMENTED)
 - [ ] **Calibration Mode:** Map PWM % to real-world RPM values.
 
 ## Phase 3: Bioreactor Expansion
@@ -22,5 +22,5 @@
 
 ## Phase 5: Advanced Features (New Proposals)
 - [ ] **PID Implementation:** Closed-loop speed control.
-- [ ] **Decoupling Protection:** Auto-detect and reset when the magnet slips.
+- [x] **Decoupling Protection:** Auto-detect and reset when the magnet slips. (IMPLEMENTED)
 - [ ] **Sensor Fusion:** Display temperature (DS18B20) and current (INA219) data.
