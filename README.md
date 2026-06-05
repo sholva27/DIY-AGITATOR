@@ -27,6 +27,7 @@ This project implements a high-precision, feature-rich Magnetic Stirrer using an
 | [debugging.md](debugging.md) | Troubleshooting guide for common issues. |
 | [proposals.md](proposals.md) | Advanced improvement suggestions (in French). |
 | [sensor_comparison.md](sensor_comparison.md) | Analysis of ACS712 vs. INA219 for current monitoring. |
+| [creative_proposals.md](creative_proposals.md) | Advanced ideas like ML maintenance, Voice control, and Vortex lighting. |
 
 ## 🛠️ Getting Started
 
