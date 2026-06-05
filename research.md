@@ -22,3 +22,9 @@
 ## 5. Acceleration Ramping (Soft Start)
 - **Problem:** Sudden jumps in fan speed (e.g. 0% to 100%) create high inertia torque. Since the magnetic coupling between the fan and the stirrer bar has a limited force, the bar can "break free" and sit vibrating in the center.
 - **Solution:** Implementing a linear ramp (Soft Start). By gradually increasing the PWM duty cycle (e.g. 0.5% per 50ms), the stirrer bar can follow the magnetic field without decoupling.
+
+## 6. Inspirations et Projets Comparables
+- **Hackster.io (Magnetic Stirrer par jdale18) :** Utilisation de l'Arduino pour le PWM et un potentiomètre. Met l'accent sur l'utilisation de deux aimants en néodyme de la taille d'une pièce de monnaie.
+- **Instructables (3D Printed DIYbio Magnetic Stirrer V2) :** Un projet axé sur la biologie DIY. Utilise un ventilateur de 80mm et met en garde contre le chauffage des aimants (risque de démagnétisation).
+- **MakerWorld (Modern Magnetic Stirrer) :** Design de boîtier élégant avec support pour aimants personnalisables. Recommande l'utilisation de barreaux magnétiques de type "olive" pour une meilleure stabilité.
+- **Projets Académiques :** Certains projets utilisent des capteurs à effet Hall pour mesurer la vitesse réelle du barreau magnétique lui-même (et non celle du ventilateur) afin de détecter parfaitement le découplage.
