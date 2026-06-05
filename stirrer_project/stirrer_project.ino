@@ -36,15 +36,19 @@ struct_message incomingData;
 
 // Global Variables
 volatile int targetSpeedPercent = 0;
+float currentRampSpeed = 0;
 volatile int lastEncoded = 0;
 volatile long encoderValue = 0;
 volatile int pulseCount = 0;
 int actualRPM = 0;
+int lastRPM = 0;
 unsigned long startTime = 0;
 unsigned long lastRPMCalcTime = 0;
+unsigned long decouplingTimer = 0;
 bool isStirring = false;
+const float RAMP_STEP = 0.5; // Speed of ramping
 
-enum ControlMode { IDLE, LOCAL, REMOTE, SERIAL_CTL, STOPPED };
+enum ControlMode { IDLE, LOCAL, REMOTE, SERIAL_CTL, STOPPED, DECOUPLED };
 volatile ControlMode currentMode = IDLE;
 
 // Helper to get status string safely
@@ -55,6 +59,7 @@ String getStatusString(ControlMode mode) {
     case REMOTE: return "REMOTE";
     case SERIAL_CTL: return "SERIAL";
     case STOPPED: return "STOPPED";
+    case DECOUPLED: return "DECOUPLED";
     default: return "UNKNOWN";
   }
 }
@@ -156,7 +161,26 @@ void setFanSpeed(int percent) {
     }
   } else {
     isStirring = false;
-    if (currentMode != STOPPED) currentMode = IDLE;
+    if (currentMode != STOPPED && currentMode != DECOUPLED) currentMode = IDLE;
+  }
+}
+
+void checkDecoupling() {
+  if (isStirring && targetSpeedPercent > 20) {
+    // If RPM is 0 while target is high (Fan stalled or Tacho failed)
+    // Or if RPM drops significantly suddenly
+    if (actualRPM < 100 && targetSpeedPercent > 30) {
+      if (decouplingTimer == 0) decouplingTimer = millis();
+      if (millis() - decouplingTimer > 3000) {
+        currentMode = DECOUPLED;
+        encoderValue = 0;
+        currentRampSpeed = 0;
+        setFanSpeed(0);
+        decouplingTimer = 0;
+      }
+    } else {
+      decouplingTimer = 0;
+    }
   }
 }
 
@@ -239,8 +263,15 @@ void setup() {
 void loop() {
   handleSerial();
 
-  if (targetSpeedPercent != (int)encoderValue) {
-    setFanSpeed((int)encoderValue);
+  // Soft Start / Ramping Logic
+  if (currentRampSpeed < (float)encoderValue) {
+    currentRampSpeed += RAMP_STEP;
+    if (currentRampSpeed > (float)encoderValue) currentRampSpeed = (float)encoderValue;
+    setFanSpeed((int)currentRampSpeed);
+  } else if (currentRampSpeed > (float)encoderValue) {
+    currentRampSpeed -= RAMP_STEP * 2;
+    if (currentRampSpeed < (float)encoderValue) currentRampSpeed = (float)encoderValue;
+    setFanSpeed((int)currentRampSpeed);
   }
 
   if (digitalRead(ENCODER_SW) == LOW) {
@@ -248,6 +279,7 @@ void loop() {
     if (digitalRead(ENCODER_SW) == LOW) {
       if (isStirring) {
         encoderValue = 0;
+        currentRampSpeed = 0;
         currentMode = STOPPED;
         setFanSpeed(0);
       }
@@ -256,6 +288,7 @@ void loop() {
   }
 
   calculateRPM();
+  checkDecoupling();
   updateDisplay();
   delay(100);
 }

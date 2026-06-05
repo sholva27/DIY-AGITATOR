@@ -7,10 +7,11 @@ Actuellement, le code envoie un signal PWM constant.
 - **Amélioration :** Implémenter un régulateur PID (Proportionnel, Intégral, Dérivé).
 - **Avantage :** Le mélangeur maintiendra exactement le même RPM même si la viscosité du liquide change (ex: ajout de polymères ou changement de température).
 
-## 2. Détection de Découplage Magnétique
+## 2. Détection de Découplage Magnétique (IMPLÉMENTÉ)
 Le "saut" du barreau magnétique est un problème courant.
-- **Amélioration :** Comparer le PWM appliqué et le RPM mesuré. Si le RPM chute brusquement alors que le PWM est élevé, le système détecte un découplage.
-- **Action :** Arrêter automatiquement le ventilateur, attendre 2 secondes, puis redémarrer progressivement (Soft Start).
+- **Fonctionnalité :** Le code surveille désormais le RPM par rapport à la consigne. Si le RPM est nul alors que la puissance est élevée (>30%), le système passe en mode `DECOUPLED`.
+- **Action :** Le ventilateur s'arrête par sécurité. L'utilisateur peut relancer manuellement.
+- **Soft Start :** Une rampe progressive a été ajoutée pour éviter le décrochage lors des accélérations brusques.
 
 ## 3. Interface Web et Monitoring (IoT)
 L'ESP32-S3 possède le WiFi.
