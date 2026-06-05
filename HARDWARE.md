@@ -53,3 +53,8 @@ The Tachometer output is typically an open-collector signal. This means it "floa
 - Connect Bioreactor TX -> Stirrer RX (e.g., GPIO 44)
 - Connect Bioreactor RX -> Stirrer TX (e.g., GPIO 43)
 - **Important:** Ensure both ESP32s share a common Ground.
+
+---
+
+## Advanced Refinements
+For a more robust and professional laboratory setup, please consult the [Hardware Refinement Guide](hardware_refinement.md).
