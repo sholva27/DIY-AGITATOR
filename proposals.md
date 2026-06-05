@@ -19,7 +19,7 @@ L'ESP32-S3 possède le WiFi.
 
 ## 4. Intégration de Capteurs Additionnels
 - **Température (DS18B20) :** Placer une sonde dans le bioreacteur pour afficher la température sur l'écran OLED en plus de la vitesse.
-- **Capteur de Courant (INA219) :** Mesurer la consommation du ventilateur pour détecter une surcharge mécanique.
+- **Capteur de Courant (INA219) :** Mesurer la consommation du ventilateur pour détecter une surcharge mécanique ou un blocage. Le INA219 est préférable à l'ACS712 pour sa précision sur les faibles courants et son immunité aux champs magnétiques des aimants.
 
 ## 5. Améliorations Matérielles (Hardware)
 - **Régulateur de tension à faible bruit :** Utiliser des condensateurs de filtrage plus importants pour éviter que le bruit du moteur ne perturbe l'écran OLED.
