@@ -24,3 +24,4 @@
 - [ ] **PID Implementation:** Closed-loop speed control.
 - [x] **Decoupling Protection:** Auto-detect and reset when the magnet slips. (IMPLEMENTED)
 - [ ] **Sensor Fusion:** Display temperature (DS18B20) and current (INA219) data.
+- [ ] **IoT Suite:** Web Dashboard, OTA Updates, and MQTT logging.
