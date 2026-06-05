@@ -29,6 +29,10 @@ This document outlines the hardware setup for the ESP32-S3 based Magnetic Stirre
 | | Pin 4 (PWM)  | GPIO 14 | 25kHz PWM Signal |
 | **Buzzer** | Positive | GPIO 15 | Active Buzzer (5V or 3.3V) |
 | | Negative | GND | |
+| **RGB LED** | Red | GPIO 16 | Use 220 Ohm resistor |
+| | Green | GPIO 17 | Use 220 Ohm resistor |
+| | Blue | GPIO 18 | Use 220 Ohm resistor |
+| | Cathode | GND | Common Cathode |
 
 ## Interfacing Recommendations
 

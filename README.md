@@ -11,6 +11,7 @@ This project implements a high-precision, feature-rich Magnetic Stirrer using an
     - **Decoupling Detection:** Automatically stops and alarms if the magnetic bar slips or the fan stalls.
 - **Integrated Timer:** Set a stir duration with an audible alarm (Buzzer) when finished.
 - **OLED UI:** 0.96" I2C display showing Target %, Actual RPM, Timer, and System Status.
+- **RGB Status LED:** Visual feedback via breathing (Active/Idle), static (Stopped), and flashing (Alert) effects.
 - **Bioreactor Ready:**
     - **ESP-NOW:** Wireless control for cable-free integration.
     - **UART Serial:** Wired control for high-reliability lab environments.

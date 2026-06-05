@@ -15,6 +15,11 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define FAN_TACHO_PIN 13
 #define BUZZER_PIN 15
 
+// RGB LED Pins (Common Cathode assumed)
+#define LED_R 16
+#define LED_G 17
+#define LED_B 18
+
 // Rotary Encoder Pins
 #define ENCODER_CLK 10
 #define ENCODER_DT  11
@@ -24,10 +29,17 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define BIO_RX 44
 #define BIO_TX 43
 
-// PWM Settings
-#define PWM_FREQ 25000
-#define PWM_RES 8
-#define PWM_CHAN 0
+// PWM Settings for Fan
+#define FAN_PWM_FREQ 25000
+#define FAN_PWM_RES 8
+#define FAN_PWM_CHAN 0
+
+// PWM Settings for RGB LED
+#define LED_PWM_FREQ 5000
+#define LED_PWM_RES 8
+#define LED_CHAN_R 1
+#define LED_CHAN_G 2
+#define LED_CHAN_B 3
 
 typedef struct struct_message {
   int speed;
@@ -48,11 +60,12 @@ unsigned long lastRPMCalcTime = 0;
 unsigned long decouplingTimer = 0;
 unsigned long remainingSeconds = 0;
 unsigned long lastSecondUpdate = 0;
+unsigned long lastLEDUpdate = 0;
 bool isStirring = false;
 bool isTimerActive = false;
-bool editTimerMode = false; // Toggle between Speed and Timer set
-const float RAMP_STEP_UP = 0.5;   // Smoother acceleration to prevent decoupling
-const float RAMP_STEP_DOWN = 1.0; // Faster deceleration
+bool editTimerMode = false;
+const float RAMP_STEP_UP = 0.5;
+const float RAMP_STEP_DOWN = 1.0;
 
 enum ControlMode { IDLE, LOCAL, REMOTE, SERIAL_CTL, STOPPED, DECOUPLED, TIMER_DONE };
 volatile ControlMode currentMode = IDLE;
@@ -90,7 +103,6 @@ void IRAM_ATTR handleEncoder() {
     else encoderValue--;
     currentMode = LOCAL;
   }
-
   lastEncoded = encoded;
   if (encoderValue > 100) encoderValue = 100;
   if (encoderValue < 0) encoderValue = 0;
@@ -99,13 +111,71 @@ void IRAM_ATTR handleEncoder() {
 
 void setupFan() {
   #if ESP_ARDUINO_VERSION_MAJOR >= 3
-    ledcAttach(FAN_PWM_PIN, PWM_FREQ, PWM_RES);
+    ledcAttach(FAN_PWM_PIN, FAN_PWM_FREQ, FAN_PWM_RES);
   #else
-    ledcSetup(PWM_CHAN, PWM_FREQ, PWM_RES);
-    ledcAttachPin(FAN_PWM_PIN, PWM_CHAN);
+    ledcSetup(FAN_PWM_CHAN, FAN_PWM_FREQ, FAN_PWM_RES);
+    ledcAttachPin(FAN_PWM_PIN, FAN_PWM_CHAN);
   #endif
   pinMode(FAN_TACHO_PIN, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(FAN_TACHO_PIN), handleTachoPulse, FALLING);
+}
+
+void setupRGB() {
+  #if ESP_ARDUINO_VERSION_MAJOR >= 3
+    ledcAttach(LED_R, LED_PWM_FREQ, LED_PWM_RES);
+    ledcAttach(LED_G, LED_PWM_FREQ, LED_PWM_RES);
+    ledcAttach(LED_B, LED_PWM_FREQ, LED_PWM_RES);
+  #else
+    ledcSetup(LED_CHAN_R, LED_PWM_FREQ, LED_PWM_RES);
+    ledcSetup(LED_CHAN_G, LED_PWM_FREQ, LED_PWM_RES);
+    ledcSetup(LED_CHAN_B, LED_PWM_FREQ, LED_PWM_RES);
+    ledcAttachPin(LED_R, LED_CHAN_R);
+    ledcAttachPin(LED_G, LED_CHAN_G);
+    ledcAttachPin(LED_B, LED_CHAN_B);
+  #endif
+}
+
+void setRGB(int r, int g, int b) {
+  #if ESP_ARDUINO_VERSION_MAJOR >= 3
+    ledcWrite(LED_R, r);
+    ledcWrite(LED_G, g);
+    ledcWrite(LED_B, b);
+  #else
+    ledcWrite(LED_CHAN_R, r);
+    ledcWrite(LED_CHAN_G, g);
+    ledcWrite(LED_CHAN_B, b);
+  #endif
+}
+
+void updateLED() {
+  unsigned long now = millis();
+  static float angle = 0;
+  int brightness = 0;
+
+  switch(currentMode) {
+    case IDLE:
+    case LOCAL:
+    case REMOTE:
+    case SERIAL_CTL:
+      // Breathing Green (Pulse/Heartbeat)
+      angle += 0.05;
+      if (angle > TWO_PI) angle = 0;
+      brightness = (sin(angle) + 1) * 127;
+      setRGB(0, brightness, 0);
+      break;
+
+    case STOPPED:
+      // Solid Red
+      setRGB(255, 0, 0);
+      break;
+
+    case DECOUPLED:
+    case TIMER_DONE:
+      // Flashing Red Alert
+      if ((now / 200) % 2 == 0) setRGB(255, 0, 0);
+      else setRGB(0, 0, 0);
+      break;
+  }
 }
 
 void setupEncoder() {
@@ -157,7 +227,7 @@ void setFanSpeed(int percent) {
   #if ESP_ARDUINO_VERSION_MAJOR >= 3
     ledcWrite(FAN_PWM_PIN, dutyCycle);
   #else
-    ledcWrite(PWM_CHAN, dutyCycle);
+    ledcWrite(FAN_PWM_CHAN, dutyCycle);
   #endif
   if (targetSpeedPercent > 0) {
     if (!isStirring) { isStirring = true; startTime = millis(); }
@@ -217,7 +287,7 @@ void setupOLED() {
   display.setTextColor(SSD1306_WHITE);
   display.setTextSize(1);
   display.setCursor(0,0);
-  display.println("Stirrer + Timer...");
+  display.println("Stirrer + RGB LED...");
   display.print("MAC: ");
   display.println(WiFi.macAddress());
   display.display();
@@ -268,6 +338,7 @@ void setup() {
   pinMode(BUZZER_PIN, OUTPUT);
   setupOLED();
   setupFan();
+  setupRGB();
   setupEncoder();
   setupESPNOW();
 }
@@ -275,7 +346,7 @@ void setup() {
 void loop() {
   handleSerial();
 
-  // Ramping Logic (Soft Start / Smooth Stop)
+  // Ramping Logic
   if (currentRampSpeed < (float)encoderValue) {
     currentRampSpeed += RAMP_STEP_UP;
     if (currentRampSpeed > (float)encoderValue) currentRampSpeed = (float)encoderValue;
@@ -293,10 +364,8 @@ void loop() {
     unsigned long pressDuration = millis() - pressStart;
 
     if (pressDuration < 500) {
-      // Short press: Toggle Speed/Timer edit
       editTimerMode = !editTimerMode;
     } else {
-      // Long press: Start/Stop with Timer
       if (isStirring) {
         encoderValue = 0;
         currentRampSpeed = 0;
@@ -309,7 +378,7 @@ void loop() {
           isTimerActive = true;
           lastSecondUpdate = millis();
         }
-        encoderValue = 50; // Auto-start at 50%
+        encoderValue = 50;
       }
     }
   }
@@ -317,6 +386,7 @@ void loop() {
   calculateRPM();
   handleTimer();
   checkDecoupling();
+  updateLED();
   updateDisplay();
-  delay(50);
+  delay(20);
 }
