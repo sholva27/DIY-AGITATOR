@@ -13,6 +13,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 // Pin Definitions
 #define FAN_PWM_PIN 14
 #define FAN_TACHO_PIN 13
+#define BUZZER_PIN 15
 
 // Rotary Encoder Pins
 #define ENCODER_CLK 10
@@ -39,19 +40,22 @@ volatile int targetSpeedPercent = 0;
 float currentRampSpeed = 0;
 volatile int lastEncoded = 0;
 volatile long encoderValue = 0;
+volatile long timerMinutes = 0;
 volatile int pulseCount = 0;
 int actualRPM = 0;
-int lastRPM = 0;
 unsigned long startTime = 0;
 unsigned long lastRPMCalcTime = 0;
 unsigned long decouplingTimer = 0;
+unsigned long remainingSeconds = 0;
+unsigned long lastSecondUpdate = 0;
 bool isStirring = false;
-const float RAMP_STEP = 0.5; // Speed of ramping
+bool isTimerActive = false;
+bool editTimerMode = false; // Toggle between Speed and Timer set
+const float RAMP_STEP = 0.5;
 
-enum ControlMode { IDLE, LOCAL, REMOTE, SERIAL_CTL, STOPPED, DECOUPLED };
+enum ControlMode { IDLE, LOCAL, REMOTE, SERIAL_CTL, STOPPED, DECOUPLED, TIMER_DONE };
 volatile ControlMode currentMode = IDLE;
 
-// Helper to get status string safely
 String getStatusString(ControlMode mode) {
   switch(mode) {
     case IDLE: return "IDLE";
@@ -60,11 +64,11 @@ String getStatusString(ControlMode mode) {
     case SERIAL_CTL: return "SERIAL";
     case STOPPED: return "STOPPED";
     case DECOUPLED: return "DECOUPLED";
+    case TIMER_DONE: return "DONE!";
     default: return "UNKNOWN";
   }
 }
 
-// Interrupt Service Routine for Tachometer
 void IRAM_ATTR handleTachoPulse() {
   pulseCount++;
 }
@@ -72,35 +76,33 @@ void IRAM_ATTR handleTachoPulse() {
 void IRAM_ATTR handleEncoder() {
   int MSB = digitalRead(ENCODER_CLK);
   int LSB = digitalRead(ENCODER_DT);
-
   int encoded = (MSB << 1) | LSB;
   int sum = (lastEncoded << 2) | encoded;
 
   if (sum == 0b1101 || sum == 0b0100 || sum == 0b0010 || sum == 0b1011) {
-    encoderValue++;
+    if (editTimerMode) timerMinutes++;
+    else encoderValue++;
     currentMode = LOCAL;
   }
   if (sum == 0b1110 || sum == 0b0111 || sum == 0b0001 || sum == 0b1000) {
-    encoderValue--;
+    if (editTimerMode) { if (timerMinutes > 0) timerMinutes--; }
+    else encoderValue--;
     currentMode = LOCAL;
   }
 
   lastEncoded = encoded;
-
   if (encoderValue > 100) encoderValue = 100;
   if (encoderValue < 0) encoderValue = 0;
+  if (timerMinutes > 999) timerMinutes = 999;
 }
 
 void setupFan() {
-  // PWM Setup (Compatible with ESP32 Arduino 3.0+)
   #if ESP_ARDUINO_VERSION_MAJOR >= 3
     ledcAttach(FAN_PWM_PIN, PWM_FREQ, PWM_RES);
   #else
     ledcSetup(PWM_CHAN, PWM_FREQ, PWM_RES);
     ledcAttachPin(FAN_PWM_PIN, PWM_CHAN);
   #endif
-
-  // Tachometer Setup
   pinMode(FAN_TACHO_PIN, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(FAN_TACHO_PIN), handleTachoPulse, FALLING);
 }
@@ -109,12 +111,19 @@ void setupEncoder() {
   pinMode(ENCODER_CLK, INPUT_PULLUP);
   pinMode(ENCODER_DT, INPUT_PULLUP);
   pinMode(ENCODER_SW, INPUT_PULLUP);
-
   attachInterrupt(digitalPinToInterrupt(ENCODER_CLK), handleEncoder, CHANGE);
   attachInterrupt(digitalPinToInterrupt(ENCODER_DT), handleEncoder, CHANGE);
 }
 
-// New ESP-NOW callback signature for Arduino 3.0+
+void triggerAlarm() {
+  for(int i=0; i<3; i++) {
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(200);
+    digitalWrite(BUZZER_PIN, LOW);
+    delay(100);
+  }
+}
+
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
 void OnDataRecv(const esp_now_recv_info_t * recv_info, const uint8_t *incoming, int len) {
 #else
@@ -127,10 +136,7 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incoming, int len) {
 
 void setupESPNOW() {
   WiFi.mode(WIFI_STA);
-  if (esp_now_init() != ESP_OK) {
-    return;
-  }
-  esp_now_register_recv_cb(OnDataRecv);
+  if (esp_now_init() == ESP_OK) esp_now_register_recv_cb(OnDataRecv);
 }
 
 void handleSerial() {
@@ -147,28 +153,38 @@ void handleSerial() {
 void setFanSpeed(int percent) {
   targetSpeedPercent = constrain(percent, 0, 100);
   int dutyCycle = (targetSpeedPercent * 255) / 100;
-
   #if ESP_ARDUINO_VERSION_MAJOR >= 3
     ledcWrite(FAN_PWM_PIN, dutyCycle);
   #else
     ledcWrite(PWM_CHAN, dutyCycle);
   #endif
-
   if (targetSpeedPercent > 0) {
-    if (!isStirring) {
-      isStirring = true;
-      startTime = millis();
-    }
+    if (!isStirring) { isStirring = true; startTime = millis(); }
   } else {
     isStirring = false;
-    if (currentMode != STOPPED && currentMode != DECOUPLED) currentMode = IDLE;
+    if (currentMode != STOPPED && currentMode != DECOUPLED && currentMode != TIMER_DONE) currentMode = IDLE;
+  }
+}
+
+void handleTimer() {
+  if (isTimerActive && isStirring) {
+    if (millis() - lastSecondUpdate >= 1000) {
+      if (remainingSeconds > 0) remainingSeconds--;
+      else {
+        isTimerActive = false;
+        encoderValue = 0;
+        currentRampSpeed = 0;
+        setFanSpeed(0);
+        currentMode = TIMER_DONE;
+        triggerAlarm();
+      }
+      lastSecondUpdate = millis();
+    }
   }
 }
 
 void checkDecoupling() {
   if (isStirring && targetSpeedPercent > 20) {
-    // If RPM is 0 while target is high (Fan stalled or Tacho failed)
-    // Or if RPM drops significantly suddenly
     if (actualRPM < 100 && targetSpeedPercent > 30) {
       if (decouplingTimer == 0) decouplingTimer = millis();
       if (millis() - decouplingTimer > 3000) {
@@ -177,50 +193,43 @@ void checkDecoupling() {
         currentRampSpeed = 0;
         setFanSpeed(0);
         decouplingTimer = 0;
+        triggerAlarm();
       }
-    } else {
-      decouplingTimer = 0;
-    }
+    } else decouplingTimer = 0;
   }
 }
 
 void calculateRPM() {
-  unsigned long currentTime = millis();
-  unsigned long timeDiff = currentTime - lastRPMCalcTime;
-
-  if (timeDiff >= 1000) {
+  if (millis() - lastRPMCalcTime >= 1000) {
     noInterrupts();
     int currentPulseCount = pulseCount;
     pulseCount = 0;
     interrupts();
-
     actualRPM = (currentPulseCount * 60) / 2;
-    lastRPMCalcTime = currentTime;
+    lastRPMCalcTime = millis();
   }
 }
 
 void setupOLED() {
-  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
-    for(;;);
-  }
+  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) for(;;);
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
   display.setTextSize(1);
   display.setCursor(0,0);
-  display.println("Stirrer Initializing...");
+  display.println("Stirrer + Timer...");
   display.print("MAC: ");
   display.println(WiFi.macAddress());
   display.display();
-  delay(3000);
+  delay(2000);
 }
 
 void updateDisplay() {
   display.clearDisplay();
-
   display.setTextSize(1);
   display.setCursor(0,0);
-  display.print("STATUS: ");
-  display.println(getStatusString(currentMode));
+  display.print("MODE: ");
+  display.print(getStatusString(currentMode));
+  if (editTimerMode) display.print(" [T]"); else display.print(" [S]");
 
   display.drawLine(0, 10, 127, 10, SSD1306_WHITE);
 
@@ -238,22 +247,24 @@ void updateDisplay() {
 
   display.setTextSize(1);
   display.setCursor(0, 55);
-  unsigned long elapsed = 0;
-  if (isStirring) {
-    elapsed = (millis() - startTime) / 1000;
+  if (isTimerActive) {
+    display.print("Ends in: ");
+    display.print(remainingSeconds / 60);
+    display.print(":");
+    if (remainingSeconds % 60 < 10) display.print("0");
+    display.print(remainingSeconds % 60);
+  } else {
+    display.print("Timer Set: ");
+    display.print(timerMinutes);
+    display.print("m");
   }
-  display.print("Time: ");
-  display.print(elapsed / 60);
-  display.print("m ");
-  display.print(elapsed % 60);
-  display.print("s");
-
   display.display();
 }
 
 void setup() {
   Serial.begin(115200);
   Serial1.begin(115200, SERIAL_8N1, BIO_RX, BIO_TX);
+  pinMode(BUZZER_PIN, OUTPUT);
   setupOLED();
   setupFan();
   setupEncoder();
@@ -263,7 +274,7 @@ void setup() {
 void loop() {
   handleSerial();
 
-  // Soft Start / Ramping Logic
+  // Ramping Logic
   if (currentRampSpeed < (float)encoderValue) {
     currentRampSpeed += RAMP_STEP;
     if (currentRampSpeed > (float)encoderValue) currentRampSpeed = (float)encoderValue;
@@ -274,21 +285,37 @@ void loop() {
     setFanSpeed((int)currentRampSpeed);
   }
 
+  // Button Handling
   if (digitalRead(ENCODER_SW) == LOW) {
-    delay(50);
-    if (digitalRead(ENCODER_SW) == LOW) {
+    unsigned long pressStart = millis();
+    while(digitalRead(ENCODER_SW) == LOW);
+    unsigned long pressDuration = millis() - pressStart;
+
+    if (pressDuration < 500) {
+      // Short press: Toggle Speed/Timer edit
+      editTimerMode = !editTimerMode;
+    } else {
+      // Long press: Start/Stop with Timer
       if (isStirring) {
         encoderValue = 0;
         currentRampSpeed = 0;
+        isTimerActive = false;
         currentMode = STOPPED;
         setFanSpeed(0);
+      } else {
+        if (timerMinutes > 0) {
+          remainingSeconds = timerMinutes * 60;
+          isTimerActive = true;
+          lastSecondUpdate = millis();
+        }
+        encoderValue = 50; // Auto-start at 50%
       }
-      while(digitalRead(ENCODER_SW) == LOW);
     }
   }
 
   calculateRPM();
+  handleTimer();
   checkDecoupling();
   updateDisplay();
-  delay(100);
+  delay(50);
 }

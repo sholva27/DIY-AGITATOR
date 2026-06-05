@@ -28,4 +28,4 @@ L'ESP32-S3 possède le WiFi.
 
 ## 6. Modes de Mélange Avancés
 - **Mode Pulsé :** Alterner entre haute et basse vitesse pour créer des turbulences spécifiques.
-- **Minuteur avec Alarme :** Programmer une durée de mélange et activer un buzzer à la fin.
+- **Minuteur avec Alarme (IMPLÉMENTÉ) :** Programmer une durée de mélange via l'encodeur (appui court pour basculer en mode Timer). Un buzzer (GPIO 15) retentit à la fin du compte à rebours ou en cas de découplage.

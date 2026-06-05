@@ -27,6 +27,8 @@ This document outlines the hardware setup for the ESP32-S3 based Magnetic Stirre
 | | Pin 2 (12V) | +12V | Direct from power supply |
 | | Pin 3 (Tacho)| GPIO 13 | Use 10k Pull-up to 3.3V |
 | | Pin 4 (PWM)  | GPIO 14 | 25kHz PWM Signal |
+| **Buzzer** | Positive | GPIO 15 | Active Buzzer (5V or 3.3V) |
+| | Negative | GND | |
 
 ## Interfacing Recommendations
 
