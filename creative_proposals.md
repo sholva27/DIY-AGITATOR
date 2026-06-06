@@ -28,3 +28,7 @@ Pour aller encore plus loin dans l'innovation, voici des idées créatives pour 
 ## 6. Synchronisation de Flotte (Multi-Stirrer Network)
 - **Concept :** Utiliser le Mesh WiFi ou ESP-NOW pour synchroniser 10 mélangeurs.
 - **Utilité :** Lancer une expérience sur 10 échantillons en parallèle avec la garantie qu'ils tournent exactement à la même vitesse et s'arrêtent au même moment.
+
+## 7. Interface I2C Unifiée (Encodeur IIC)
+- **Concept :** Remplacer l'encodeur mécanique standard par un module I2C (ex: EC11 IIC).
+- **Utilité :** Libérer des GPIO pour d'autres capteurs et utiliser le même bus que l'écran OLED pour un câblage ultra-propre et une meilleure immunité au bruit.
