@@ -1,56 +1,44 @@
 # DIY Magnetic Stirrer for Lab & Bioreactor
 
-This project implements a high-precision, feature-rich Magnetic Stirrer using an **ESP32-S3**. It is designed to work as a standalone laboratory tool or as an integrated stirring node for a larger Bioreactor system.
+High-performance **ESP32-S3** based magnetic stirrer node for autonomous laboratory applications and bioreactor integration.
 
 ## 🚀 Key Features
 
-- **Precision Speed Control:** 4-pin PC Fan control via 25kHz PWM.
-- **RPM Feedback:** Real-time RPM measurement using the fan's tachometer.
-- **Advanced Safety:**
-    - **Soft Start/Ramping:** Prevents magnetic decoupling during acceleration.
-    - **Decoupling Detection:** Automatically stops and alarms if the magnetic bar slips or the fan stalls.
-- **Integrated Timer:** Set a stir duration with an audible alarm (Buzzer) when finished.
-- **OLED UI:** 0.96" I2C display showing Target %, Actual RPM, Timer, and System Status.
-- **RGB Status LED:** Visual feedback via breathing (Active/Idle), static (Stopped), and flashing (Alert) effects.
-- **Bioreactor Ready:**
-    - **ESP-NOW:** Wireless control for cable-free integration.
-    - **UART Serial:** Wired control for high-reliability lab environments.
+- **Dual-Loop Precision:**
+    - Closed-loop PID control using optional Hall sensor for direct stir bar RPM.
+    - Automatic fallback to Fan Tachometer PID if the stir bar sensor is absent.
+- **Safety First:**
+    - **Linear Ramping:** Smooth acceleration/deceleration to prevent magnetic decoupling.
+    - **Physical Stall Detection:** Detects when the fan is physically obstructed.
+    - **True Decoupling Detection:** Only possible with the optional Hall sensor; detects if the fan spins but the bar is stationary.
+    - **Hardware E-STOP:** Optional High-side kill switch (GPIO 5) for complete power isolation.
+- **Robust Integration:**
+    - **Framed Telemetry:** Periodically broadcasts structured packets with CRC8 checksum via ESP-NOW and Serial1.
+    - **Control Arbitration:** Explicit `REMOTE_LOCKED` mode for master-slave bioreactor control with local override safety.
+- **Visual & Audible Feedback:**
+    - **Heartbeat LED:** RGB LED pulses Green for activity and stays Red for safety stops.
+    - **Audible Alarms:** Active buzzer for timer completion and decoupling alerts.
 
 ## 📁 Project Documentation
 
 | File | Description |
 | :--- | :--- |
-| [HARDWARE.md](HARDWARE.md) | Wiring diagrams, component list, and interfacing tips. |
-| [Bioreactor integration.md](Bioreactor%20integration.md) | How to link this project with `Bioreacteur_PI` and `FLUOreacteur`. |
-| [research.md](research.md) | Technical specs on PWM, magnetic coupling, and design inspirations. |
-| [roadmap.md](roadmap.md) | Future development phases (PID control, Web Dashboard, etc.). |
-| [debugging.md](debugging.md) | Troubleshooting guide for common issues. |
-| [proposals.md](proposals.md) | Advanced improvement suggestions (in French). |
-| [sensor_comparison.md](sensor_comparison.md) | Analysis of ACS712 vs. INA219 for current monitoring. |
-| [creative_proposals.md](creative_proposals.md) | Advanced ideas like ML maintenance, Voice control, and Vortex lighting. |
-| [shopping_list_dz.md](shopping_list_dz.md) | Verified components for users in Algeria (dzduino, sesdz). |
+| [HARDWARE.md](HARDWARE.md) | **Updated:** New pinout (Serial1 on 6/7, Hall on 4, E-STOP on 5). |
+| [Bioreactor integration.md](Bioreactor%20integration.md) | Framed packet structures (CRC8) and control arbitration logic. |
+| [sensor_comparison.md](sensor_comparison.md) | Technical choice between ACS712 and INA219. |
+| [software_refinement.md](software_refinement.md) | Advanced PID tuning and spectral analysis proposals. |
+| [shopping_list_dz.md](shopping_list_dz.md) | Algeria-specific sourcing guide. |
 
 ## 🛠️ Getting Started
 
-### 1. Hardware Setup
-Follow the wiring guide in [HARDWARE.md](HARDWARE.md). Ensure your 4-pin fan is powered by a dedicated 12V source and shares a common ground with the ESP32.
+### 1. Requirements
+- ESP32 Arduino Core 2.x or 3.x (both supported via conditional macros).
+- `Adafruit_SSD1306`, `Adafruit_GFX`, `Adafruit_INA219`, `WiFi`, `esp_now`, `Preferences`.
 
-### 2. Required Libraries
-- `Adafruit_SSD1306`
-- `Adafruit_GFX`
-- `Wire`
-- `WiFi` & `esp_now` (Standard ESP32 libraries)
+### 2. Flashing
+1. Ensure "USB CDC On Boot" is **ENABLED** in Arduino IDE for logging.
+2. Select **ESP32-S3 Dev Module**.
+3. Upload `stirrer_project/stirrer_project.ino`.
 
-### 3. Flashing
-1. Open `stirrer_project/stirrer_project.ino` in the Arduino IDE.
-2. Select your **ESP32-S3** board.
-3. If you are using ESP32 Arduino Core 3.0+, the code will automatically adapt.
-4. Upload to your board.
-5. Note the **MAC Address** displayed on the OLED at startup for ESP-NOW pairing.
-
-## 🤝 Bioreactor Ecosystem
-This project is part of a larger ecosystem of DIY lab tools:
-- **Bioreacteur_ESP32_PI:** Control system for pH, Temp, and O2.
-- **NADAH_FLUOreacteur_ESP32:** Fluorescence measurement system.
-
-See [Bioreactor integration.md](Bioreactor%20integration.md) for more details on cross-project communication.
+## 🤝 Ecosystem
+Integrates with `Bioreacteur_ESP32_PI` and `NADAH_FLUOreacteur_ESP32`.

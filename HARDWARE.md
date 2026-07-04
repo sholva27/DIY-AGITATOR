@@ -1,4 +1,4 @@
-# Hardware Configuration for DIY Magnetic Stirrer (ESP32-S3)
+# Hardware Configuration (ESP32-S3)
 
 ## Wiring Diagram
 
@@ -8,24 +8,23 @@
 | | SCL | GPIO 9 | |
 | **Rotary Encoder**| CLK | GPIO 10 | |
 | | DT | GPIO 11 | |
-| | SW | GPIO 12 | Short: Mode, Long: ON/OFF |
+| | SW | GPIO 12 | Short: Mode, Long: Start/Stop |
+| **Hall Sensor** | Signal | GPIO 4 | Optional: Direct Bar RPM |
+| **Kill Switch** | Drive | GPIO 5 | Optional: High-side power cut |
 | **Buzzer** | Signal | GPIO 15 | Active Buzzer |
 | **RGB LED** | R, G, B| GPIO 16, 17, 18 | Common Cathode |
 | **4-Pin Fan** | PWM | GPIO 14 | 25kHz Signal |
 | | Tacho | GPIO 13 | **10k Pull-up to 3.3V Required** |
-| **Serial Link** | RX | GPIO 4 | Bioreactor Master TX |
-| | TX | GPIO 5 | Bioreactor Master RX |
+| **Serial Link** | RX | GPIO 6 | Bioreactor Master TX |
+| | TX | GPIO 7 | Bioreactor Master RX |
 
-## Important Interfacing Notes
+## Important Notes
 
-### 1. UART Communication (Serial1)
-The Serial1 link for bioreactor integration has been moved to **GPIO 4 (RX)** and **GPIO 5 (TX)**.
-- Avoid using GPIO 43 and 44, as these are the default UART0 pins used for boot logging and firmware flashing.
-- If you use the native USB port for debugging, ensure "USB CDC On Boot" is **ENABLED** in your Arduino IDE settings.
+### 1. UART Pin Mapping
+Serial1 is on **GPIO 6 and 7**. This avoids conflicts with the ESP32-S3's native boot logs and flashing pins. Use the Native USB port (GPIO 19/20) for Serial Monitor by enabling **USB CDC On Boot**.
 
-### 2. Fan Tachometer Protection
-PC Fans have an open-collector tachometer output. To protect the ESP32 and get a valid signal, you **MUST** connect a 10k Ohm resistor between the Tacho pin (GPIO 13) and 3.3V.
+### 2. High-Side Kill Switch (E-STOP)
+Connecting GPIO 5 to a P-Channel MOSFET or a dedicated High-side power switch allows the firmware to physically cut the 12V supply to the fan in case of decoupling or stall, providing a true hardware fail-safe.
 
-### 3. Stall & Decoupling Detection
-- **Software Detection:** The current firmware detects if the fan is physically stalled (actual RPM < 100 while target > 25%).
-- **Decoupling:** True magnetic decoupling (fan spins but bar stops) is difficult to detect via tachometer alone. For critical applications, refer to the [Software Refinement Guide](software_refinement.md) for jitter analysis techniques.
+### 3. Stir Bar Hall Sensor
+Placing a Hall Effect sensor (e.g. A3144) near the stirring container allows the firmware to measure the magnetic pulses of the stir bar itself. This enables **True Decoupling Detection** and high-precision PID control.

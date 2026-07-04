@@ -4,30 +4,60 @@
 // Replace with the MAC Address of your Stirrer ESP32 (printed on OLED at boot)
 uint8_t stirrerAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
+/* --- DATA STRUCTURES (Synchronized with stirrer_project.ino) --- */
+#pragma pack(push, 1)
 typedef struct {
-  int target_speed;         // 0-100%
-  bool remote_lock;         // If true, ignore local encoder rotation
+  uint8_t start_byte;   // 0xAA
+  uint8_t len;
+  uint8_t target_speed; // 0-100%
+  uint8_t command;      // 0: Release, 1: Acquire/Lock
+  uint8_t crc8;
 } stirrer_command_t;
 
 typedef struct {
-  int actual_rpm;
-  int current_pwm;          // 0-255
-  uint8_t status;           // 0:IDLE, 1:LOCAL, 2:REMOTE, 3:SERIAL, 4:STOPPED, 5:DECOUPLED, 6:TIMER_DONE
+  uint8_t start_byte;   // 0xBB
+  uint8_t len;
+  uint8_t status;
+  uint8_t setpoint;
+  int16_t bar_rpm;
+  int16_t fan_rpm;
+  uint16_t current_ma;
+  uint32_t timer_rem;
+  uint8_t crc8;
 } stirrer_telemetry_t;
+#pragma pack(pop)
 
-stirrer_command_t myCmd;
+stirrer_command_t myCmd = {0xAA, sizeof(stirrer_command_t), 0, 0, 0};
 stirrer_telemetry_t stirrerStats;
 
-// Callback when data is received from the Stirrer
+/* --- CHECKSUM --- */
+uint8_t calc_crc8(const uint8_t *data, uint8_t len) {
+  uint8_t crc = 0x00;
+  while (len--) {
+    uint8_t extract = *data++;
+    for (uint8_t tempI = 8; tempI; tempI--) {
+      uint8_t sum = (crc ^ extract) & 0x01;
+      crc >>= 1;
+      if (sum) crc ^= 0x8C;
+      extract >>= 1;
+    }
+  }
+  return crc;
+}
+
+// Callback when telemetry is received from the Stirrer
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
 void OnDataRecv(const esp_now_recv_info_t * recv_info, const uint8_t *incoming, int len) {
 #else
 void OnDataRecv(const uint8_t * mac, const uint8_t *incoming, int len) {
 #endif
-  if (len == sizeof(stirrer_telemetry_t)) {
-    memcpy(&stirrerStats, incoming, len);
-    Serial.print("Stirrer RPM: "); Serial.println(stirrerStats.actual_rpm);
-    Serial.print("Stirrer Status: "); Serial.println(stirrerStats.status);
+  if (len == sizeof(stirrer_telemetry_t) && incoming[0] == 0xBB) {
+    uint8_t calc = calc_crc8(incoming, len - 1);
+    if (calc == incoming[len-1]) {
+      memcpy(&stirrerStats, incoming, len);
+      Serial.print("Stirrer RPM: "); Serial.println(stirrerStats.bar_rpm);
+      Serial.print("Stirrer Status: "); Serial.println(stirrerStats.status);
+    }
   }
 }
 
@@ -54,11 +84,12 @@ void setup() {
 }
 
 void loop() {
-  // Example: Send 50% speed with remote lock enabled
+  // Example: Send 50% speed with remote lock enabled every 10 seconds
   myCmd.target_speed = 50;
-  myCmd.remote_lock = true;
+  myCmd.command = 1; // Acquire Lock
+  myCmd.crc8 = calc_crc8((uint8_t*)&myCmd, sizeof(stirrer_command_t) - 1);
 
   esp_now_send(stirrerAddress, (uint8_t *) &myCmd, sizeof(myCmd));
 
-  delay(5000);
+  delay(10000);
 }
