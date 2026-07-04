@@ -1,23 +1,20 @@
 #include <esp_now.h>
 #include <WiFi.h>
 
-// Replace with the MAC Address of your Stirrer ESP32 (printed on OLED at boot)
-uint8_t stirrerAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+#define STRUCT_VERSION 0x02
 
-/* --- DATA STRUCTURES (Synchronized with stirrer_project.ino) --- */
-#pragma pack(push, 1)
 typedef struct {
-  uint8_t start_byte;   // 0xAA
-  uint8_t len;
-  uint8_t target_speed; // 0-100%
-  uint8_t command;      // 0: Release, 1: Acquire/Lock
+  uint8_t start_byte;
+  uint8_t version;
+  uint8_t target_speed;
+  uint8_t command;
   uint8_t crc8;
 } stirrer_command_t;
 
 typedef struct {
-  uint8_t start_byte;   // 0xBB
-  uint8_t len;
-  uint8_t status;
+  uint8_t start_byte;
+  uint8_t version;
+  uint8_t mode;
   uint8_t setpoint;
   int16_t bar_rpm;
   int16_t fan_rpm;
@@ -25,12 +22,9 @@ typedef struct {
   uint32_t timer_rem;
   uint8_t crc8;
 } stirrer_telemetry_t;
-#pragma pack(pop)
 
-stirrer_command_t myCmd = {0xAA, sizeof(stirrer_command_t), 0, 0, 0};
-stirrer_telemetry_t stirrerStats;
+uint8_t stirrer_mac[] = {0x32, 0xAE, 0xA4, 0x07, 0x0D, 0x66}; // Change to your stirrer MAC
 
-/* --- CHECKSUM --- */
 uint8_t calc_crc8(const uint8_t *data, uint8_t len) {
   uint8_t crc = 0x00;
   while (len--) {
@@ -45,18 +39,12 @@ uint8_t calc_crc8(const uint8_t *data, uint8_t len) {
   return crc;
 }
 
-// Callback when telemetry is received from the Stirrer
-#if ESP_ARDUINO_VERSION_MAJOR >= 3
 void OnDataRecv(const esp_now_recv_info_t * recv_info, const uint8_t *incoming, int len) {
-#else
-void OnDataRecv(const uint8_t * mac, const uint8_t *incoming, int len) {
-#endif
   if (len == sizeof(stirrer_telemetry_t) && incoming[0] == 0xBB) {
-    uint8_t calc = calc_crc8(incoming, len - 1);
-    if (calc == incoming[len-1]) {
-      memcpy(&stirrerStats, incoming, len);
-      Serial.print("Stirrer RPM: "); Serial.println(stirrerStats.bar_rpm);
-      Serial.print("Stirrer Status: "); Serial.println(stirrerStats.status);
+    stirrer_telemetry_t telem;
+    memcpy(&telem, incoming, sizeof(telem));
+    if (telem.version == STRUCT_VERSION) {
+       Serial.printf("Stirrer RPM: %d, Fan RPM: %d, Mode: %d\n", telem.bar_rpm, telem.fan_rpm, telem.mode);
     }
   }
 }
@@ -64,32 +52,28 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incoming, int len) {
 void setup() {
   Serial.begin(115200);
   WiFi.mode(WIFI_STA);
-
-  if (esp_now_init() != ESP_OK) {
-    Serial.println("Error initializing ESP-NOW");
-    return;
-  }
+  if (esp_now_init() != ESP_OK) return;
 
   esp_now_register_recv_cb(OnDataRecv);
 
-  esp_now_peer_info_t peerInfo;
-  memcpy(peerInfo.peer_addr, stirrerAddress, 6);
+  esp_now_peer_info_t peerInfo = {};
+  memcpy(peerInfo.peer_addr, stirrer_mac, 6);
   peerInfo.channel = 0;
   peerInfo.encrypt = false;
-
-  if (esp_now_add_peer(&peerInfo) != ESP_OK){
-    Serial.println("Failed to add peer");
-    return;
-  }
+  esp_now_add_peer(&peerInfo);
 }
 
 void loop() {
-  // Example: Send 50% speed with remote lock enabled every 10 seconds
-  myCmd.target_speed = 50;
-  myCmd.command = 1; // Acquire Lock
-  myCmd.crc8 = calc_crc8((uint8_t*)&myCmd, sizeof(stirrer_command_t) - 1);
+  static unsigned long lastSend = 0;
+  if (millis() - lastSend > 5000) {
+    stirrer_command_t cmd;
+    cmd.start_byte = 0xAA;
+    cmd.version = STRUCT_VERSION;
+    cmd.target_speed = 50; // 50% speed
+    cmd.command = 1;       // LOCK mode
+    cmd.crc8 = calc_crc8((uint8_t*)&cmd, sizeof(cmd)-1);
 
-  esp_now_send(stirrerAddress, (uint8_t *) &myCmd, sizeof(myCmd));
-
-  delay(10000);
+    esp_now_send(stirrer_mac, (uint8_t*)&cmd, sizeof(cmd));
+    lastSend = millis();
+  }
 }

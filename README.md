@@ -1,26 +1,29 @@
 # DIY Magnetic Stirrer for Lab & Bioreactor
 
-Advanced **ESP32-S3** based magnetic stirrer node featuring closed-loop PID control and bioreactor telemetry.
+A professional-grade magnetic stirrer powered by the ESP32-S3. This project features dual-core PID regulation, multiple sensing modes (Hall + Tacho), and robust communication for bioreactor integration.
 
-## 🚀 Professional Features
+## 🚀 Quick Start
+1.  **Hardware:** Wire the ESP32-S3 as per `HARDWARE.md`.
+2.  **Firmware:** Upload `stirrer_project/stirrer_project.ino` using the Arduino IDE (ESP32 by Espressif board package).
+3.  **Libraries:**
+    - Adafruit SSD1306 & GFX
+    - Preferences (Included in ESP32 core)
 
-- **PID Closed-Loop Control:** Target real RPM values, with stir bar Hall-sensor feedback and automatic Fan Tachometer fallback.
-- **Bi-Core Multi-Tasking:** FreeRTOS powered architecture ensures the 100Hz control loop never misses a pulse during UI updates.
-- **True Safety Protocols:**
-    - **Physical Stall Detection:** Detects obstructed fan blades.
-    - **Bar Decoupling Detection:** Detects if the stir bar slips (requires optional side-mounted Hall sensor).
-    - **Hardware Kill Switch:** GPIO 5 drives a high-side E-STOP to completely isolate power.
-- **Robust Telemetry:** CRC8-protected framed packets over ESP-NOW and UART Serial1 (GPIO 6/7).
-- **HMI Interface:** Non-blocking 0.96" OLED UI, Rotary Encoder with lock-arbitration, and RGB Heartbeat LED.
+## ✨ Core Features
+-   **Precision RPM Control:** Uses PID logic to maintain speed under load.
+-   **Dual Sensing:** Simultaneously monitors fan RPM and stir-bar RPM.
+-   **Magnetic Decoupling Detection:** Alerts if the bar flies off the magnets.
+-   **Bioreactor Integration:** ESP-NOW and Serial protocol (115200) with CRC8 verification.
+-   **Persistence:** Remembers your last speed setting after power loss.
+-   **Safety:** Integrated hardware kill-switch and stall protection.
 
-## 📁 Documentation Suite
+## 📁 Documentation Index
+-   **[Hardware Wiring](HARDWARE.md):** Pinouts, MOSFET circuits, and Hall placement.
+-   **[Software Logic](software_logic.md):** Explanation of PID, FreeRTOS tasks, and safety state machines.
+-   **[Integration Guide](Bioreactor%20integration.md):** Protocol details for connecting to a master controller.
+-   **[Market/Research](research.md):** Sourcing tips for Algeria and component comparisons.
+-   **[Future Roadmap](roadmap.md):** Plans for IoT, Web Dashboards, and Auto-Titration.
 
-- [HARDWARE.md](HARDWARE.md): Pinout and electrical engineering requirements.
-- [Bioreactor integration.md](Bioreactor%20integration.md): Comm protocols for master controllers.
-- [research.md](research.md): Fact-checked science on fan torque and sensor placement.
-- [debugging.md](debugging.md): Signal verification and I2C troubleshooting.
-
-## 🤝 Ecosystem
-Designed for seamless integration with:
-- **Bioreacteur_ESP32_PI**
-- **NADAH_FLUOreacteur_ESP32**
+## 🛠 Advanced Tools
+-   **[Bioreactor Client Example](bioreactor_client_example.ino):** Example code to control the stirrer remotely.
+-   **[Refinement Guide](software_refinement.md):** Performance tuning and advanced calibration.
