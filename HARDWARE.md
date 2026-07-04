@@ -1,60 +1,31 @@
-# Hardware Configuration for DIY Magnetic Stirrer
-
-This document outlines the hardware setup for the ESP32-S3 based Magnetic Stirrer.
-
-## Components
-- **Microcontroller:** ESP32-S3
-- **Fan:** 4-Pin PC Cooling Fan (12V)
-- **Display:** 0.96" OLED I2C (SSD1306)
-- **Input:** Rotary Encoder (with push button)
-- **Power:** 12V DC Power Supply
-- **Voltage Regulation:** 12V to 5V/3.3V Step-down (Buck) converter for the ESP32
+# Hardware Configuration for DIY Magnetic Stirrer (ESP32-S3)
 
 ## Wiring Diagram
 
 | Component | Pin | ESP32-S3 GPIO | Notes |
 | :--- | :--- | :--- | :--- |
-| **OLED** | VCC | 3.3V | |
-| | GND | GND | |
-| | SDA | GPIO 8 | Default I2C SDA |
-| | SCL | GPIO 9 | Default I2C SCL |
-| **Rotary Encoder** | CLK | GPIO 10 | |
+| **OLED (I2C)** | SDA | GPIO 8 | |
+| | SCL | GPIO 9 | |
+| **Rotary Encoder**| CLK | GPIO 10 | |
 | | DT | GPIO 11 | |
-| | SW | GPIO 12 | Push button |
-| | VCC | 3.3V | |
-| | GND | GND | |
-| **4-Pin Fan** | Pin 1 (GND) | GND | Common ground with ESP32 |
-| | Pin 2 (12V) | +12V | Direct from power supply |
-| | Pin 3 (Tacho)| GPIO 13 | Use 10k Pull-up to 3.3V |
-| | Pin 4 (PWM)  | GPIO 14 | 25kHz PWM Signal |
-| **Buzzer** | Positive | GPIO 15 | Active Buzzer (5V or 3.3V) |
-| | Negative | GND | |
-| **RGB LED** | Red | GPIO 16 | Use 220 Ohm resistor |
-| | Green | GPIO 17 | Use 220 Ohm resistor |
-| | Blue | GPIO 18 | Use 220 Ohm resistor |
-| | Cathode | GND | Common Cathode |
+| | SW | GPIO 12 | Short: Mode, Long: ON/OFF |
+| **Buzzer** | Signal | GPIO 15 | Active Buzzer |
+| **RGB LED** | R, G, B| GPIO 16, 17, 18 | Common Cathode |
+| **4-Pin Fan** | PWM | GPIO 14 | 25kHz Signal |
+| | Tacho | GPIO 13 | **10k Pull-up to 3.3V Required** |
+| **Serial Link** | RX | GPIO 4 | Bioreactor Master TX |
+| | TX | GPIO 5 | Bioreactor Master RX |
 
-## Interfacing Recommendations
+## Important Interfacing Notes
 
-### 1. Fan PWM Control
-PC Fans expect a PWM frequency of approximately **25kHz**. The ESP32-S3's LEDC peripheral is perfect for this. While the fan is 12V, the PWM input is usually compatible with 3.3V logic levels.
+### 1. UART Communication (Serial1)
+The Serial1 link for bioreactor integration has been moved to **GPIO 4 (RX)** and **GPIO 5 (TX)**.
+- Avoid using GPIO 43 and 44, as these are the default UART0 pins used for boot logging and firmware flashing.
+- If you use the native USB port for debugging, ensure "USB CDC On Boot" is **ENABLED** in your Arduino IDE settings.
 
-### 2. Fan Tachometer (RPM)
-The Tachometer output is typically an open-collector signal. This means it "floats" when high and connects to GND when low.
-- **Recommendation:** Connect a 10k ohm resistor between the ESP32 3.3V pin and the Tacho GPIO (GPIO 13). This ensures the signal stays at 3.3V when the fan isn't pulling it down, protecting the ESP32.
+### 2. Fan Tachometer Protection
+PC Fans have an open-collector tachometer output. To protect the ESP32 and get a valid signal, you **MUST** connect a 10k Ohm resistor between the Tacho pin (GPIO 13) and 3.3V.
 
-### 3. Power Supply
-- Use a **12V DC adapter** (at least 1A).
-- Power the fan directly from the 12V rail.
-- Use a **Buck Converter** to drop 12V to 5V to power the ESP32-S3 via its VIN/5V pin.
-
-### 4. Bioreactor Integration (Wired)
-- To connect to the Bioreactor ESP32 via wires, use **Serial (UART)**.
-- Connect Bioreactor TX -> Stirrer RX (e.g., GPIO 44)
-- Connect Bioreactor RX -> Stirrer TX (e.g., GPIO 43)
-- **Important:** Ensure both ESP32s share a common Ground.
-
----
-
-## Advanced Refinements
-For a more robust and professional laboratory setup, please consult the [Hardware Refinement Guide](hardware_refinement.md).
+### 3. Stall & Decoupling Detection
+- **Software Detection:** The current firmware detects if the fan is physically stalled (actual RPM < 100 while target > 25%).
+- **Decoupling:** True magnetic decoupling (fan spins but bar stops) is difficult to detect via tachometer alone. For critical applications, refer to the [Software Refinement Guide](software_refinement.md) for jitter analysis techniques.

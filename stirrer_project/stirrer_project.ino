@@ -4,72 +4,81 @@
 #include <esp_now.h>
 #include <WiFi.h>
 
-#define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 64
-#define OLED_RESET    -1
+/* --- CONFIGURATION --- */
+#define FAN_PPR 2           // Pulses Per Revolution of the fan
 #define SCREEN_ADDRESS 0x3C
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+#define I2C_SPEED 400000
+#define TELEMETRY_INTERVAL 1000
+#define DISPLAY_INTERVAL 200
+#define PID_INTERVAL 100
 
-// Pin Definitions
+/* --- PIN DEFINITIONS --- */
 #define FAN_PWM_PIN 14
 #define FAN_TACHO_PIN 13
 #define BUZZER_PIN 15
-
-// RGB LED Pins (Common Cathode assumed)
 #define LED_R 16
 #define LED_G 17
 #define LED_B 18
-
-// Rotary Encoder Pins
 #define ENCODER_CLK 10
 #define ENCODER_DT  11
 #define ENCODER_SW  12
+#define BIO_RX 4
+#define BIO_TX 5
 
-// UART for Bioreactor
-#define BIO_RX 44
-#define BIO_TX 43
-
-// PWM Settings for Fan
-#define FAN_PWM_FREQ 25000
-#define FAN_PWM_RES 8
+/* --- PWM CHANNELS (Legacy API) --- */
 #define FAN_PWM_CHAN 0
-
-// PWM Settings for RGB LED
-#define LED_PWM_FREQ 5000
-#define LED_PWM_RES 8
 #define LED_CHAN_R 1
 #define LED_CHAN_G 2
 #define LED_CHAN_B 3
 
-typedef struct struct_message {
-  int speed;
-} struct_message;
+/* --- DATA STRUCTURES (Synchronized with Bioreactor integration.md) --- */
+typedef struct {
+  int target_speed;         // 0-100%
+  bool remote_lock;         // If true, ignore local encoder rotation
+} stirrer_command_t;
 
-struct_message incomingData;
+typedef struct {
+  int actual_rpm;
+  int current_pwm;          // 0-255
+  uint8_t status;           // ControlMode enum
+} stirrer_telemetry_t;
 
-// Global Variables
-volatile int targetSpeedPercent = 0;
-float currentRampSpeed = 0;
-volatile int lastEncoded = 0;
+stirrer_command_t incomingCmd = {0, false};
+stirrer_telemetry_t outgoingData;
+
+/* --- STATE MACHINE --- */
+enum ControlMode { IDLE, LOCAL, REMOTE, SERIAL_CTL, STOPPED, DECOUPLED, TIMER_DONE };
+volatile ControlMode currentMode = IDLE;
+volatile bool system_on = false;
+
+/* --- GLOBAL VARIABLES --- */
 volatile long encoderValue = 0;
 volatile long timerMinutes = 0;
 volatile int pulseCount = 0;
 int actualRPM = 0;
-unsigned long startTime = 0;
-unsigned long lastRPMCalcTime = 0;
-unsigned long decouplingTimer = 0;
+int targetRPM = 0;
+float current_pwm_output = 0;
 unsigned long remainingSeconds = 0;
-unsigned long lastSecondUpdate = 0;
-unsigned long lastLEDUpdate = 0;
-bool isStirring = false;
 bool isTimerActive = false;
 bool editTimerMode = false;
-const float RAMP_STEP_UP = 0.5;
-const float RAMP_STEP_DOWN = 1.0;
+bool oled_enabled = false;
+uint8_t master_mac[6] = {0};
 
-enum ControlMode { IDLE, LOCAL, REMOTE, SERIAL_CTL, STOPPED, DECOUPLED, TIMER_DONE };
-volatile ControlMode currentMode = IDLE;
+// Timers
+unsigned long lastRPMCalcTime = 0;
+unsigned long lastDisplayUpdate = 0;
+unsigned long lastTelemetryTime = 0;
+unsigned long lastPIDTime = 0;
+unsigned long lastSecondUpdate = 0;
+unsigned long decouplingTimer = 0;
 
+Adafruit_SSD1306 display(128, 64, &Wire, -1);
+
+/* --- PID CONSTANTS --- */
+float Kp = 0.5, Ki = 0.1, Kd = 0.05;
+float integral = 0, lastError = 0;
+
+/* --- HELPERS --- */
 String getStatusString(ControlMode mode) {
   switch(mode) {
     case IDLE: return "IDLE";
@@ -83,310 +92,264 @@ String getStatusString(ControlMode mode) {
   }
 }
 
-void IRAM_ATTR handleTachoPulse() {
-  pulseCount++;
-}
+void IRAM_ATTR handleTachoPulse() { pulseCount++; }
 
 void IRAM_ATTR handleEncoder() {
+  static int lastEncoded = 0;
   int MSB = digitalRead(ENCODER_CLK);
   int LSB = digitalRead(ENCODER_DT);
   int encoded = (MSB << 1) | LSB;
   int sum = (lastEncoded << 2) | encoded;
 
-  if (sum == 0b1101 || sum == 0b0100 || sum == 0b0010 || sum == 0b1011) {
-    if (editTimerMode) timerMinutes++;
-    else encoderValue++;
-    currentMode = LOCAL;
-  }
-  if (sum == 0b1110 || sum == 0b0111 || sum == 0b0001 || sum == 0b1000) {
-    if (editTimerMode) { if (timerMinutes > 0) timerMinutes--; }
-    else encoderValue--;
-    currentMode = LOCAL;
+  if (!incomingCmd.remote_lock) {
+    if (sum == 0b1101 || sum == 0b0100 || sum == 0b0010 || sum == 0b1011) {
+      if (editTimerMode) timerMinutes++;
+      else encoderValue++;
+      currentMode = LOCAL;
+    }
+    if (sum == 0b1110 || sum == 0b0111 || sum == 0b0001 || sum == 0b1000) {
+      if (editTimerMode) { if (timerMinutes > 0) timerMinutes--; }
+      else encoderValue--;
+      currentMode = LOCAL;
+    }
+    if (encoderValue > 100) encoderValue = 100;
+    if (encoderValue < 0) encoderValue = 0;
+    if (timerMinutes > 999) timerMinutes = 999;
   }
   lastEncoded = encoded;
-  if (encoderValue > 100) encoderValue = 100;
-  if (encoderValue < 0) encoderValue = 0;
-  if (timerMinutes > 999) timerMinutes = 999;
-}
-
-void setupFan() {
-  #if ESP_ARDUINO_VERSION_MAJOR >= 3
-    ledcAttach(FAN_PWM_PIN, FAN_PWM_FREQ, FAN_PWM_RES);
-  #else
-    ledcSetup(FAN_PWM_CHAN, FAN_PWM_FREQ, FAN_PWM_RES);
-    ledcAttachPin(FAN_PWM_PIN, FAN_PWM_CHAN);
-  #endif
-  pinMode(FAN_TACHO_PIN, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(FAN_TACHO_PIN), handleTachoPulse, FALLING);
-}
-
-void setupRGB() {
-  #if ESP_ARDUINO_VERSION_MAJOR >= 3
-    ledcAttach(LED_R, LED_PWM_FREQ, LED_PWM_RES);
-    ledcAttach(LED_G, LED_PWM_FREQ, LED_PWM_RES);
-    ledcAttach(LED_B, LED_PWM_FREQ, LED_PWM_RES);
-  #else
-    ledcSetup(LED_CHAN_R, LED_PWM_FREQ, LED_PWM_RES);
-    ledcSetup(LED_CHAN_G, LED_PWM_FREQ, LED_PWM_RES);
-    ledcSetup(LED_CHAN_B, LED_PWM_FREQ, LED_PWM_RES);
-    ledcAttachPin(LED_R, LED_CHAN_R);
-    ledcAttachPin(LED_G, LED_CHAN_G);
-    ledcAttachPin(LED_B, LED_CHAN_B);
-  #endif
 }
 
 void setRGB(int r, int g, int b) {
   #if ESP_ARDUINO_VERSION_MAJOR >= 3
-    ledcWrite(LED_R, r);
-    ledcWrite(LED_G, g);
-    ledcWrite(LED_B, b);
+    ledcWrite(LED_R, r); ledcWrite(LED_G, g); ledcWrite(LED_B, b);
   #else
-    ledcWrite(LED_CHAN_R, r);
-    ledcWrite(LED_CHAN_G, g);
-    ledcWrite(LED_CHAN_B, b);
+    ledcWrite(LED_CHAN_R, r); ledcWrite(LED_CHAN_G, g); ledcWrite(LED_CHAN_B, b);
   #endif
 }
 
-void updateLED() {
+void updateVisuals() {
   unsigned long now = millis();
-  static float angle = 0;
-  int brightness = 0;
+  if (currentMode < STOPPED) {
+    int b = (sin(now * 0.003) + 1) * 127;
+    setRGB(0, b, 0);
+  } else if (currentMode == STOPPED) {
+    setRGB(255, 0, 0);
+  } else {
+    if ((now / 200) % 2 == 0) setRGB(255, 0, 0); else setRGB(0, 0, 0);
+  }
 
-  switch(currentMode) {
-    case IDLE:
-    case LOCAL:
-    case REMOTE:
-    case SERIAL_CTL:
-      // Breathing Green (Pulse/Heartbeat)
-      angle += 0.05;
-      if (angle > TWO_PI) angle = 0;
-      brightness = (sin(angle) + 1) * 127;
-      setRGB(0, brightness, 0);
-      break;
-
-    case STOPPED:
-      // Solid Red
-      setRGB(255, 0, 0);
-      break;
-
-    case DECOUPLED:
-    case TIMER_DONE:
-      // Flashing Red Alert
-      if ((now / 200) % 2 == 0) setRGB(255, 0, 0);
-      else setRGB(0, 0, 0);
-      break;
+  static unsigned long buzzerStart = 0;
+  if (currentMode >= DECOUPLED && buzzerStart == 0) { buzzerStart = now; }
+  if (buzzerStart > 0) {
+    if (now - buzzerStart < 1000) {
+       if ((now / 200) % 2 == 0) digitalWrite(BUZZER_PIN, HIGH);
+       else digitalWrite(BUZZER_PIN, LOW);
+    } else {
+       digitalWrite(BUZZER_PIN, LOW);
+       if (currentMode < DECOUPLED) buzzerStart = 0;
+    }
   }
 }
 
-void setupEncoder() {
-  pinMode(ENCODER_CLK, INPUT_PULLUP);
-  pinMode(ENCODER_DT, INPUT_PULLUP);
-  pinMode(ENCODER_SW, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(ENCODER_CLK), handleEncoder, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(ENCODER_DT), handleEncoder, CHANGE);
-}
+/* --- COMMUNICATION --- */
+void sendTelemetry() {
+  outgoingData.actual_rpm = actualRPM;
+  outgoingData.current_pwm = (int)current_pwm_output;
+  outgoingData.status = (uint8_t)currentMode;
 
-void triggerAlarm() {
-  for(int i=0; i<3; i++) {
-    digitalWrite(BUZZER_PIN, HIGH);
-    delay(200);
-    digitalWrite(BUZZER_PIN, LOW);
-    delay(100);
+  Serial1.print("RPM:"); Serial1.print(actualRPM);
+  Serial1.print(",PWM:"); Serial1.print(outgoingData.current_pwm);
+  Serial1.print(",STAT:"); Serial1.println(getStatusString(currentMode));
+
+  if (master_mac[0] != 0) {
+    esp_now_send(master_mac, (uint8_t *) &outgoingData, sizeof(outgoingData));
   }
 }
 
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
 void OnDataRecv(const esp_now_recv_info_t * recv_info, const uint8_t *incoming, int len) {
+  if (len == sizeof(stirrer_command_t)) {
+    memcpy(&incomingCmd, incoming, len);
+    memcpy(master_mac, recv_info->src_addr, 6);
+    encoderValue = incomingCmd.target_speed;
+    currentMode = REMOTE;
+  }
+}
 #else
 void OnDataRecv(const uint8_t * mac, const uint8_t *incoming, int len) {
-#endif
-  memcpy(&incomingData, incoming, sizeof(incomingData));
-  encoderValue = incomingData.speed;
-  currentMode = REMOTE;
+  if (len == sizeof(stirrer_command_t)) {
+    memcpy(&incomingCmd, incoming, len);
+    memcpy(master_mac, mac, 6);
+    encoderValue = incomingCmd.target_speed;
+    currentMode = REMOTE;
+  }
 }
+#endif
 
 void setupESPNOW() {
-  WiFi.mode(WIFI_STA);
-  if (esp_now_init() == ESP_OK) esp_now_register_recv_cb(OnDataRecv);
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("Error initializing ESP-NOW");
+    return;
+  }
+  esp_now_register_recv_cb(OnDataRecv);
 }
 
 void handleSerial() {
   if (Serial1.available() > 0) {
     String input = Serial1.readStringUntil('\n');
-    int speed = input.toInt();
-    if (speed >= 0 && speed <= 100) {
-      encoderValue = speed;
+    int val = input.toInt();
+    if (val >= 0 && val <= 100) {
+      encoderValue = val;
       currentMode = SERIAL_CTL;
     }
   }
 }
 
-void setFanSpeed(int percent) {
-  targetSpeedPercent = constrain(percent, 0, 100);
-  int dutyCycle = (targetSpeedPercent * 255) / 100;
+/* --- CONTROL LOGIC --- */
+void updatePID() {
+  if (!system_on) {
+    current_pwm_output = 0;
+    integral = 0;
+  } else {
+    targetRPM = encoderValue * 30;
+    float error = targetRPM - actualRPM;
+    integral += error * (PID_INTERVAL / 1000.0);
+    float derivative = (error - lastError) / (PID_INTERVAL / 1000.0);
+    float output = (Kp * error) + (Ki * integral) + (Kd * derivative);
+    float feedforward = (encoderValue / 100.0) * 255.0;
+    current_pwm_output = constrain(feedforward + output, 0, 255);
+    lastError = error;
+  }
+
   #if ESP_ARDUINO_VERSION_MAJOR >= 3
-    ledcWrite(FAN_PWM_PIN, dutyCycle);
+    ledcWrite(FAN_PWM_PIN, (int)current_pwm_output);
   #else
-    ledcWrite(FAN_PWM_CHAN, dutyCycle);
+    ledcWrite(FAN_PWM_CHAN, (int)current_pwm_output);
   #endif
-  if (targetSpeedPercent > 0) {
-    if (!isStirring) { isStirring = true; startTime = millis(); }
-  } else {
-    isStirring = false;
-    if (currentMode != STOPPED && currentMode != DECOUPLED && currentMode != TIMER_DONE) currentMode = IDLE;
-  }
 }
 
-void handleTimer() {
-  if (isTimerActive && isStirring) {
-    if (millis() - lastSecondUpdate >= 1000) {
-      if (remainingSeconds > 0) remainingSeconds--;
-      else {
-        isTimerActive = false;
-        encoderValue = 0;
-        currentRampSpeed = 0;
-        setFanSpeed(0);
-        currentMode = TIMER_DONE;
-        triggerAlarm();
-      }
-      lastSecondUpdate = millis();
-    }
-  }
-}
-
-void checkDecoupling() {
-  if (isStirring && targetSpeedPercent > 20) {
-    if (actualRPM < 100 && targetSpeedPercent > 30) {
-      if (decouplingTimer == 0) decouplingTimer = millis();
-      if (millis() - decouplingTimer > 3000) {
-        currentMode = DECOUPLED;
-        encoderValue = 0;
-        currentRampSpeed = 0;
-        setFanSpeed(0);
-        decouplingTimer = 0;
-        triggerAlarm();
-      }
-    } else decouplingTimer = 0;
-  }
-}
-
-void calculateRPM() {
-  if (millis() - lastRPMCalcTime >= 1000) {
-    noInterrupts();
-    int currentPulseCount = pulseCount;
-    pulseCount = 0;
-    interrupts();
-    actualRPM = (currentPulseCount * 60) / 2;
-    lastRPMCalcTime = millis();
-  }
-}
-
-void setupOLED() {
-  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) for(;;);
-  display.clearDisplay();
-  display.setTextColor(SSD1306_WHITE);
-  display.setTextSize(1);
-  display.setCursor(0,0);
-  display.println("Stirrer + RGB LED...");
-  display.print("MAC: ");
-  display.println(WiFi.macAddress());
-  display.display();
-  delay(2000);
-}
-
-void updateDisplay() {
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setCursor(0,0);
-  display.print("MODE: ");
-  display.print(getStatusString(currentMode));
-  if (editTimerMode) display.print(" [T]"); else display.print(" [S]");
-
-  display.drawLine(0, 10, 127, 10, SSD1306_WHITE);
-
-  display.setCursor(0, 15);
-  display.print("Target: ");
-  display.setTextSize(2);
-  display.print(targetSpeedPercent);
-  display.print("%");
-
-  display.setTextSize(1);
-  display.setCursor(0, 35);
-  display.print("RPM: ");
-  display.setTextSize(2);
-  display.print(actualRPM);
-
-  display.setTextSize(1);
-  display.setCursor(0, 55);
-  if (isTimerActive) {
-    display.print("Ends in: ");
-    display.print(remainingSeconds / 60);
-    display.print(":");
-    if (remainingSeconds % 60 < 10) display.print("0");
-    display.print(remainingSeconds % 60);
-  } else {
-    display.print("Timer Set: ");
-    display.print(timerMinutes);
-    display.print("m");
-  }
-  display.display();
-}
 
 void setup() {
   Serial.begin(115200);
   Serial1.begin(115200, SERIAL_8N1, BIO_RX, BIO_TX);
+
   pinMode(BUZZER_PIN, OUTPUT);
-  setupOLED();
-  setupFan();
-  setupRGB();
-  setupEncoder();
+  pinMode(FAN_TACHO_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(FAN_TACHO_PIN), handleTachoPulse, FALLING);
+
+  pinMode(ENCODER_CLK, INPUT_PULLUP);
+  pinMode(ENCODER_DT, INPUT_PULLUP);
+  pinMode(ENCODER_SW, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_CLK), handleEncoder, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_DT), handleEncoder, CHANGE);
+
+  WiFi.mode(WIFI_STA);
   setupESPNOW();
+
+  Wire.begin(8, 9);
+  Wire.setClock(I2C_SPEED);
+  if(display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    oled_enabled = true;
+    display.clearDisplay();
+    display.setTextColor(1);
+    display.setTextSize(1);
+    display.setCursor(0,0);
+    display.println("BIO-STIRRER S3");
+    display.print("MAC: "); display.println(WiFi.macAddress());
+    display.display();
+    delay(2000);
+  }
+
+  #if ESP_ARDUINO_VERSION_MAJOR >= 3
+    ledcAttach(FAN_PWM_PIN, 25000, 8);
+    ledcAttach(LED_R, 5000, 8); ledcAttach(LED_G, 5000, 8); ledcAttach(LED_B, 5000, 8);
+  #else
+    ledcSetup(FAN_PWM_CHAN, 25000, 8); ledcAttachPin(FAN_PWM_PIN, FAN_PWM_CHAN);
+    ledcSetup(LED_CHAN_R, 5000, 8); ledcAttachPin(LED_R, LED_CHAN_R);
+    ledcSetup(LED_CHAN_G, 5000, 8); ledcAttachPin(LED_G, LED_CHAN_G);
+    ledcSetup(LED_CHAN_B, 5000, 8); ledcAttachPin(LED_B, LED_CHAN_B);
+  #endif
 }
 
 void loop() {
+  unsigned long now = millis();
   handleSerial();
 
-  // Ramping Logic
-  if (currentRampSpeed < (float)encoderValue) {
-    currentRampSpeed += RAMP_STEP_UP;
-    if (currentRampSpeed > (float)encoderValue) currentRampSpeed = (float)encoderValue;
-    setFanSpeed((int)currentRampSpeed);
-  } else if (currentRampSpeed > (float)encoderValue) {
-    currentRampSpeed -= RAMP_STEP_DOWN;
-    if (currentRampSpeed < (float)encoderValue) currentRampSpeed = (float)encoderValue;
-    setFanSpeed((int)currentRampSpeed);
+  if (now - lastRPMCalcTime >= 1000) {
+    noInterrupts();
+    int p = pulseCount; pulseCount = 0;
+    interrupts();
+    actualRPM = (p * 60) / FAN_PPR;
+    lastRPMCalcTime = now;
   }
 
-  // Button Handling
-  if (digitalRead(ENCODER_SW) == LOW) {
-    unsigned long pressStart = millis();
-    while(digitalRead(ENCODER_SW) == LOW);
-    unsigned long pressDuration = millis() - pressStart;
+  if (now - lastPIDTime >= PID_INTERVAL) {
+    updatePID();
+    lastPIDTime = now;
+  }
 
-    if (pressDuration < 500) {
-      editTimerMode = !editTimerMode;
-    } else {
-      if (isStirring) {
-        encoderValue = 0;
-        currentRampSpeed = 0;
-        isTimerActive = false;
-        currentMode = STOPPED;
-        setFanSpeed(0);
+  // checkSafety logic using 'now'
+  if (system_on && encoderValue > 25) {
+    if (actualRPM < 100) {
+      if (decouplingTimer == 0) decouplingTimer = now;
+      if (now - decouplingTimer > 4000) {
+        currentMode = DECOUPLED; system_on = false; encoderValue = 0;
+      }
+    } else decouplingTimer = 0;
+  }
+
+  if (isTimerActive && system_on) {
+    if (now - lastSecondUpdate >= 1000) {
+      if (remainingSeconds > 0) remainingSeconds--;
+      else {
+        isTimerActive = false; system_on = false; encoderValue = 0;
+        currentMode = TIMER_DONE;
+      }
+      lastSecondUpdate = now;
+    }
+  }
+
+  if (digitalRead(ENCODER_SW) == LOW) {
+    unsigned long start = millis();
+    while(digitalRead(ENCODER_SW) == LOW);
+    if (millis() - start < 500) editTimerMode = !editTimerMode;
+    else {
+      system_on = !system_on;
+      if (system_on) {
+        if (timerMinutes > 0) { remainingSeconds = timerMinutes * 60; isTimerActive = true; }
+        if (encoderValue == 0) encoderValue = 30;
       } else {
-        if (timerMinutes > 0) {
-          remainingSeconds = timerMinutes * 60;
-          isTimerActive = true;
-          lastSecondUpdate = millis();
-        }
-        encoderValue = 50;
+        isTimerActive = false; currentMode = STOPPED;
       }
     }
   }
 
-  calculateRPM();
-  handleTimer();
-  checkDecoupling();
-  updateLED();
-  updateDisplay();
-  delay(20);
+  if (now - lastTelemetryTime >= TELEMETRY_INTERVAL) {
+    sendTelemetry();
+    lastTelemetryTime = now;
+  }
+
+  if (oled_enabled && (now - lastDisplayUpdate >= DISPLAY_INTERVAL)) {
+    display.clearDisplay();
+    display.setCursor(0,0);
+    display.print(getStatusString(currentMode));
+    if (incomingCmd.remote_lock) display.print(" [LOCKED]");
+    display.drawLine(0, 10, 127, 10, 1);
+    display.setCursor(0, 15); display.print("Set: "); display.print(encoderValue); display.print("%");
+    if (editTimerMode) display.print(" <T>");
+    display.setTextSize(2);
+    display.setCursor(0, 30); display.print(actualRPM); display.print(" RPM");
+    display.setTextSize(1);
+    display.setCursor(0, 55);
+    if (isTimerActive) {
+      display.print("Time: "); display.print(remainingSeconds/60); display.print(":");
+      if(remainingSeconds%60 < 10) display.print("0"); display.print(remainingSeconds%60);
+    } else {
+      display.print("Timer: "); display.print(timerMinutes); display.print("m");
+    }
+    display.display();
+    lastDisplayUpdate = now;
+  }
+
+  updateVisuals();
 }
