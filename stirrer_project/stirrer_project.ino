@@ -7,7 +7,6 @@
 
 /* --- FEATURE FLAGS --- */
 #define ENABLE_HALL
-//#define ENABLE_INA219
 #define ENABLE_KILL_SWITCH
 
 /* --- CONFIGURATION --- */
@@ -23,10 +22,10 @@
 #define SCREEN_ADDRESS 0x3C
 
 /* --- PIN DEFINITIONS --- */
-#define HALL_PIN 4
-#define KILL_SWITCH_PIN 5
-#define BIO_RX 6
-#define BIO_TX 7
+#define BIO_RX 4
+#define BIO_TX 5
+#define HALL_PIN 6
+#define KILL_SWITCH_PIN 7
 #define OLED_SDA 8
 #define OLED_SCL 9
 #define ENCODER_CLK 10
@@ -71,20 +70,26 @@ typedef struct {
 volatile long targetSetpoint = 0;
 long lastSavedSetpoint = -1;
 volatile unsigned long lastChangeTime = 0;
+
+volatile unsigned long lastBarMicros = 0;
+volatile unsigned long lastFanMicros = 0;
+volatile unsigned long barPeriod = 0;
+volatile unsigned long fanPeriod = 0;
+volatile int fanPulseCount = 0; // For calibration stable counting
 volatile int barPulseCount = 0;
+
 volatile bool isCalibrating = false;
 volatile bool settingTimer = false;
 volatile long timerMinutes = 0;
-volatile int fanPulseCount = 0;
 int actualBarRPM = 0, actualFanRPM = 0;
-float current_pwm_val = 0;
+volatile float current_pwm_val = 0;
 unsigned long remainingSeconds = 0;
 bool oled_present = false;
 bool bar_sensor_valid = false;
 uint8_t last_master_mac[6] = {0};
 unsigned long last_heartbeat = 0;
 
-int calibration_map[CALIBRATION_POINTS]; // PWM index to RPM
+int calibration_map[CALIBRATION_POINTS];
 
 Preferences prefs;
 Adafruit_SSD1306 display(128, 64, &Wire, -1);
@@ -166,8 +171,25 @@ void sendTelemetry() {
 }
 
 /* --- ISRs --- */
-void IRAM_ATTR onFanPulse() { fanPulseCount++; }
-void IRAM_ATTR onBarPulse() { barPulseCount++; }
+void IRAM_ATTR onFanPulse() {
+  unsigned long now = micros();
+  fanPulseCount++;
+  unsigned long p = now - lastFanMicros;
+  if (p > 5000) { // Debounce 200Hz max
+    fanPeriod = p;
+    lastFanMicros = now;
+  }
+}
+
+void IRAM_ATTR onBarPulse() {
+  unsigned long now = micros();
+  barPulseCount++;
+  unsigned long p = now - lastBarMicros;
+  if (p > 10000) { // Debounce 100Hz max
+    barPeriod = p;
+    lastBarMicros = now;
+  }
+}
 
 void IRAM_ATTR handleEncoder() {
   static int lastEncoded = 0;
@@ -224,19 +246,24 @@ void ControlTask(void *pvParameters) {
     unsigned long now = millis();
     if (now - lastPID >= PID_INTERVAL) {
       noInterrupts();
-      int fCount = fanPulseCount; fanPulseCount = 0;
-      int bCount = barPulseCount; barPulseCount = 0;
+      unsigned long fP = fanPeriod;
+      unsigned long bP = barPeriod;
+      // Timeout if no pulse seen for 300ms
+      if (micros() - lastFanMicros > 300000) fP = 0;
+      if (micros() - lastBarMicros > 300000) bP = 0;
       interrupts();
-      actualFanRPM = (fCount * 60 * 10) / FAN_PPR;
-      actualBarRPM = (bCount * 60 * 10);
 
-      // Check Hall Crosstalk: if bar RPM perfectly matches fan RPM for too long, sensor is misplaced
-      // Bar RPM calculation: (bCount * 60 * 10). Fan RPM: (fCount * 60 * 10) / 2.
-      // If locked, actualBarRPM == actualFanRPM.
-      if (system_on && actualBarRPM > 100 && abs(actualBarRPM - actualFanRPM) < 50) {
-        bar_sensor_valid = false;
+      if (fP > 0) actualFanRPM = (60000000ULL / (fP * FAN_PPR));
+      else actualFanRPM = 0;
+
+      if (bP > 0) actualBarRPM = (60000000ULL / bP);
+      else actualBarRPM = 0;
+
+      // Crosstalk detection during startup
+      if (system_on && now - kickstartStart < 5000 && actualBarRPM > 100 && abs(actualBarRPM - actualFanRPM) < 10) {
+          bar_sensor_valid = false;
       } else if (actualBarRPM > 50) {
-        bar_sensor_valid = true;
+          bar_sensor_valid = true;
       }
 
       if (isCalibrating) {
@@ -247,14 +274,13 @@ void ControlTask(void *pvParameters) {
             #else
               ledcWrite(0, (int)current_pwm_val);
             #endif
-            vTaskDelay(pdMS_TO_TICKS(2000));
+            vTaskDelay(pdMS_TO_TICKS(1500));
             noInterrupts(); fanPulseCount = 0; interrupts();
             vTaskDelay(pdMS_TO_TICKS(1000));
             noInterrupts(); int fC = fanPulseCount; interrupts();
             calibration_map[i] = (fC * 60) / FAN_PPR;
          }
-         isCalibrating = false;
-         system_on = false;
+         isCalibrating = false; system_on = false;
       } else if (system_on && targetSetpoint > 0) {
         if (remainingSeconds == 0 && timerMinutes > 0) {
             system_on = false; currentMode = TIMER_DONE;
@@ -266,8 +292,17 @@ void ControlTask(void *pvParameters) {
           float targetRPM = targetSetpoint * 30;
           float error = targetRPM - (bar_sensor_valid ? actualBarRPM : actualFanRPM);
           integral += error * 0.1;
+          integral = constrain(integral, -100, 100);
+
+          float feedForward = targetSetpoint * 2.55;
+          // Use calibration map if available (simple interpolation)
+          if (calibration_map[1] > 0) {
+             int idx = constrain((int)targetRPM / 300, 0, CALIBRATION_POINTS - 1);
+             feedForward = 50 + (idx * 20);
+          }
+
           float output = (Kp * error) + (Ki * integral);
-          current_pwm_val = constrain((targetSetpoint * 2.55) + output, MIN_PWM, 255);
+          current_pwm_val = constrain(feedForward + output, MIN_PWM, 255);
         }
       } else {
         current_pwm_val = 0; integral = 0; kickstartStart = 0;
@@ -281,11 +316,8 @@ void ControlTask(void *pvParameters) {
 
       // Safety Checks
       if (system_on && targetSetpoint > 25 && (now - kickstartStart > 2000)) {
-        if (actualFanRPM < 100) {
-           currentMode = FAN_STALL; system_on = false; targetSetpoint = 0;
-        } else if (bar_sensor_valid && actualBarRPM < 50 && actualFanRPM > 500) {
-           currentMode = DECOUPLED; system_on = false; targetSetpoint = 0;
-        }
+        if (actualFanRPM < 100) { currentMode = FAN_STALL; system_on = false; }
+        else if (bar_sensor_valid && actualBarRPM < 50 && actualFanRPM > 500) { currentMode = DECOUPLED; system_on = false; }
       }
       lastPID = now;
     }
@@ -294,7 +326,11 @@ void ControlTask(void *pvParameters) {
 }
 
 void setLED(uint8_t r, uint8_t g, uint8_t b) {
-  analogWrite(LED_R, 255-r); analogWrite(LED_G, 255-g); analogWrite(LED_B, 255-b);
+  #if ESP_ARDUINO_VERSION_MAJOR >= 3
+    ledcWrite(LED_R, 255-r); ledcWrite(LED_G, 255-g); ledcWrite(LED_B, 255-b);
+  #else
+    ledcWrite(1, 255-r); ledcWrite(2, 255-g); ledcWrite(3, 255-b);
+  #endif
 }
 
 void InterfaceTask(void *pvParameters) {
@@ -303,7 +339,13 @@ void InterfaceTask(void *pvParameters) {
   lastSavedSetpoint = targetSetpoint;
   prefs.end();
 
-  pinMode(LED_R, OUTPUT); pinMode(LED_G, OUTPUT); pinMode(LED_B, OUTPUT);
+  #if ESP_ARDUINO_VERSION_MAJOR >= 3
+    ledcAttach(LED_R, 5000, 8); ledcAttach(LED_G, 5000, 8); ledcAttach(LED_B, 5000, 8);
+  #else
+    ledcSetup(1, 5000, 8); ledcAttachPin(LED_R, 1);
+    ledcSetup(2, 5000, 8); ledcAttachPin(LED_G, 2);
+    ledcSetup(3, 5000, 8); ledcAttachPin(LED_B, 3);
+  #endif
   pinMode(BUZZER_PIN, OUTPUT);
 
   Serial1.begin(115200, SERIAL_8N1, BIO_RX, BIO_TX);
@@ -330,13 +372,16 @@ void InterfaceTask(void *pvParameters) {
 
     if (digitalRead(ENCODER_SW) == LOW && now - lastBtn > 300) {
       unsigned long pressStart = now;
-      while(digitalRead(ENCODER_SW) == LOW && millis() - pressStart < 3000) { vTaskDelay(10); }
+      while(digitalRead(ENCODER_SW) == LOW && millis() - pressStart < 3000) { vTaskDelay(pdMS_TO_TICKS(10)); }
       unsigned long duration = millis() - pressStart;
       if (duration >= 3000) {
          isCalibrating = true;
       } else if (duration >= 1000) {
-         settingTimer = !settingTimer;
-         if (!settingTimer && timerMinutes > 0) remainingSeconds = timerMinutes * 60;
+         if (currentMode == REMOTE_LOCKED) currentMode = LOCAL;
+         else {
+            settingTimer = !settingTimer;
+            if (!settingTimer && timerMinutes > 0) remainingSeconds = timerMinutes * 60;
+         }
       } else {
          system_on = !system_on;
          if (system_on && targetSetpoint == 0) targetSetpoint = 30;
@@ -361,36 +406,36 @@ void InterfaceTask(void *pvParameters) {
          display.setCursor(0, 20); display.print("PWM: "); display.print(current_pwm_val);
          display.display();
          lastDisp = now;
-         continue;
+      } else {
+        display.setCursor(0,0);
+        if (currentMode == TIMER_DONE) display.print("DONE");
+        else display.print(system_on ? "ON " : "OFF ");
+
+        if (currentMode == REMOTE_LOCKED) display.print(" LOCK");
+        if (settingTimer) display.print(" [T-SET]");
+
+        display.setCursor(0, 12);
+        display.print("Set: "); display.print(targetSetpoint); display.print("%");
+
+        display.setCursor(80, 12);
+        if (timerMinutes > 0) {
+          if (system_on) { display.print(remainingSeconds/60); display.print("m"); }
+          else { display.print("T:"); display.print(timerMinutes); display.print("m"); }
+        }
+
+        display.setCursor(0, 28); display.setTextSize(2);
+        display.print(bar_sensor_valid ? actualBarRPM : actualFanRPM);
+        display.print(" RPM");
+
+        display.setTextSize(1);
+        display.setCursor(0, 54);
+        if (currentMode == DECOUPLED) display.print("!! DECOUPLED !!");
+        else if (currentMode == FAN_STALL) display.print("!! FAN STALL !!");
+        else if (!bar_sensor_valid) display.print("[ESTIMATED]");
+
+        display.display();
+        lastDisp = now;
       }
-      display.setCursor(0,0);
-      if (currentMode == TIMER_DONE) display.print("DONE");
-      else display.print(system_on ? "ON " : "OFF ");
-
-      if (currentMode == REMOTE_LOCKED) display.print(" LOCK");
-      if (settingTimer) display.print(" [T-SET]");
-
-      display.setCursor(0, 12);
-      display.print("Set: "); display.print(targetSetpoint); display.print("%");
-
-      display.setCursor(80, 12);
-      if (timerMinutes > 0) {
-        if (system_on) { display.print(remainingSeconds/60); display.print("m"); }
-        else { display.print("T:"); display.print(timerMinutes); display.print("m"); }
-      }
-
-      display.setCursor(0, 28); display.setTextSize(2);
-      display.print(bar_sensor_valid ? actualBarRPM : actualFanRPM);
-      display.print(" RPM");
-
-      display.setTextSize(1);
-      display.setCursor(0, 54);
-      if (currentMode == DECOUPLED) display.print("!! DECOUPLED !!");
-      else if (currentMode == FAN_STALL) display.print("!! FAN STALL !!");
-      else if (!bar_sensor_valid) display.print("[ESTIMATED]");
-
-      display.display();
-      lastDisp = now;
     }
 
     if (now - lastTelem >= TELEMETRY_INTERVAL) {
