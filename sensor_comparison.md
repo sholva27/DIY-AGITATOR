@@ -1,34 +1,51 @@
-# Comparaison des Capteurs de Courant : ACS712 vs INA219
+# Current Sensor Comparison: INA219 vs ACS712
 
-Pour le projet de mélangeur magnétique (contrôle de ventilateur PC), voici une analyse comparative entre le module **ACS712 (30A)** et le **INA219**.
+For a laboratory magnetic stirrer, monitoring power consumption is a key metric for health and logging. This document evaluates the best sensor choice for the 12V DC rail.
 
-## 1. ACS712 (Capteur à Effet Hall)
-- **Principe :** Mesure le champ magnétique généré par le courant traversant une piste interne.
-- **Interface :** Sortie Analogique (Tension).
-- **Avantages :**
-    - Isolation galvanique totale entre le circuit de puissance (12V fan) et le circuit de commande (ESP32).
-    - Très simple à câbler.
-- **Inconvénients :**
-    - **Précision médiocre pour les faibles courants :** Le modèle 30A a une sensibilité de 66mV/A. Un ventilateur de PC consomme environ 0.2A à 0.5A, ce qui ne produit qu'une variation de 13mV à 33mV. C'est très difficile à mesurer précisément avec l'ADC de l'ESP32 qui est assez bruité.
-    - Sensible aux champs magnétiques externes (problématique à côté des aimants du mélangeur !).
-    - Sortie 5V (nécessite un pont diviseur pour l'entrée 3.3V de l'ESP32).
+## 1. The Verdict: INA219 (I2C Digital) wins over ACS712 (Hall Effect)
 
-## 2. INA219 (Capteur Shunt I2C)
-- **Principe :** Mesure la chute de tension aux bornes d'une résistance de précision (shunt).
-- **Interface :** I2C (Numérique).
-- **Avantages :**
-    - **Haute Précision :** Peut mesurer de très faibles courants avec une excellente résolution.
-    - **Mesure de Tension :** Mesure aussi la tension du bus (VCC du ventilateur).
-    - **Numérique :** Pas de bruit ADC, communication directe en I2C avec l'ESP32.
-    - **Paramétrable :** On peut modifier le gain pour s'adapter précisément à la consommation du ventilateur.
-- **Inconvénients :**
-    - Pas d'isolation galvanique (masse commune nécessaire).
-    - Un peu plus complexe à configurer (bibliothèque logicielle requise).
+The **INA219** is the recommended choice for this project due to its digital precision, low noise floor, and immunity to the stirrer's magnets.
 
-## Verdict pour le Projet
-**Le gagnant est le INA219.**
+| Feature | ACS712 (Analog) | INA219 (I2C Digital) |
+| :--- | :--- | :--- |
+| **Principle** | Hall Effect (Magnetic) | Shunt Resistor (Voltage Drop) |
+| **Magnetic Interference** | **Critical:** Pickups noise from the stirrer magnets. | **None:** Shunt-based, immune to magnets. |
+| **Resolution** | Low (~66-100mV/A). Poor at <500mA. | High (12-bit). Excellent at <500mA. |
+| **PWM Handling** | Aliases if not heavily filtered. | Requires averaging or 4-wire fan setup. |
+| **Telemetry** | Current only (via ADC). | Current, Bus Voltage, and Power. |
 
-**Pourquoi ?**
-Le ventilateur de PC consomme trop peu de courant pour que l'ACS712 (surtout en version 30A) soit efficace. L'ACS712 30A est conçu pour de gros moteurs ou des chargeurs de batterie. De plus, la proximité des aimants du mélangeur fausserait les mesures de l'ACS712 (effet Hall).
+---
 
-Le INA219 vous permettra de détecter si le ventilateur est bloqué ou si le barreau magnétique force trop, même avec une consommation de seulement 150mA.
+## 2. Refining the Objective: What Current Sensing *Actually* Detects
+
+It is a common misconception that current sensors can detect stir-bar decoupling. In a PC fan-based stirrer, the magnetic drag of the bar is negligible compared to the aerodynamic drag of the fan blades.
+
+### Sensor vs. Failure Mapping
+| Failure Mode | Detection Method | Notes |
+| :--- | :--- | :--- |
+| **Fan Stall (Blocked)** | **Fan Tachometer** | Free and instantaneous. Tacho goes to 0. |
+| **Bar Decoupling** | **Lateral Hall Sensor** | Essential. Measures the bar directly. |
+| **Power Supply Failure** | **INA219 (Bus Voltage)** | Detects 12V rail drop or fluctuation. |
+| **Electronic Overload** | **INA219 (Current)** | Detects MOSFET shorts or motor winding failure. |
+| **Long-term Logging** | **INA219 (Power/mA)** | Correlate power draw with liquid viscosity trends. |
+
+---
+
+## 3. Technical Implementation Details
+
+### PWM Aliasing & Fan Choice
+- **4-Wire Fans (Recommended):** The fan receives constant 12V; PWM is handled by an internal driver. Current draw is relatively continuous, making the INA219 readings stable.
+- **3-Wire Fans (High-Side Chopping):** If you use a MOSFET to chop the 12V line, the INA219 will alias.
+    - **Solution:** You must average the readings over multiple PWM cycles or place a large electrolytic capacitor (1000µF+) before the shunt to smooth the pulses.
+
+### Low-Current Calibration (Sub-1A)
+Standard INA219 modules (0.1Ω shunt) are often set to a ±320mV range (3.2A max). For a 150mA-500mA fan, this wastes resolution.
+- **Optimization:** Configure the Programmable Gain Amplifier (PGA) to **±40mV** (Range 8). This increases resolution by 8x for low-power laboratory fans.
+- **Hardware Mod:** For extreme precision, swap the 0.1Ω shunt for a **0.5Ω** shunt.
+
+---
+
+## 4. Alternatives: The "Pro" Choice
+If you cannot find an INA219 or need even more precision:
+1.  **INA226 (Superior Alternative):** 16-bit resolution (vs 12-bit) and lower offset voltage. It features a hardware **Alert Pin** that can trigger an ESP32 interrupt on overcurrent without CPU polling.
+2.  **INA219 (Standard):** Listed in the `shopping_list_dz.md` due to high availability in Algeria (dzduino.com).

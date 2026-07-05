@@ -1,35 +1,33 @@
-# Raffinement Software : Vers une Intelligence de Laboratoire
+# Software Refinement & Performance Tuning
 
-Pour passer d'un contrôle manuel à un système automatisé de qualité industrielle, voici des propositions de raffinements logiciels.
+This guide provides advanced tips for developers looking to push the DIY Stirrer firmware to professional performance levels.
 
-## 1. Régulation PID de la Vitesse (Vraie Boucle Fermée)
-Au lieu d'un PWM fixe, le système devrait viser un RPM cible.
-- **Fonctionnement :** Utiliser la bibliothèque `Arduino PID Library`.
-- **Avantage :** Si vous changez de récipient ou si la viscosité du liquide augmente, l'ESP32 augmentera automatiquement la puissance pour maintenir la vitesse exacte.
-- **Calcul :** `Output_PWM = PID(Actual_RPM, Target_RPM)`.
+## 1. INA219 Configuration for Low Currents
+The default settings of most INA219 libraries are tuned for high-current applications (3A+). For our stirrer (150-500mA), use these settings:
 
-## 2. Dashboard Web (Interface IoT)
-Exploiter les capacités WiFi de l'ESP32-S3 pour créer une interface de contrôle à distance.
-- **Technologies :** `ESPAsyncWebServer` et `WebSockets`.
-- **Fonctionnalités :**
-    - Graphique en temps réel du RPM et du PWM.
-    - Contrôle de la vitesse depuis un smartphone.
-    - Programmation de cycles complexes (ex: "Mélanger à 500 RPM pendant 1h, puis 200 RPM pendant 4h").
+- **PGA (Programmable Gain Amplifier):** Set to **±40mV** (Range 8). This utilizes the full ADC dynamic range for the small voltage drop across the 0.1Ω shunt.
+- **Bus Voltage Range:** 16V (instead of 32V) for better resolution on the 12V rail.
+- **Averaging:** Enable 12-bit, 8-sample averaging (532µs conversion time) to filter out residual motor noise.
 
-## 3. Mises à jour OTA (Over-The-Air)
-Permettre la mise à jour du code sans brancher le câble USB.
-- **Avantage :** Indispensable une fois le mélangeur enfermé dans son boîtier étanche.
-- **Sécurité :** Ajout d'un mot de passe pour éviter toute modification malveillante du firmware.
+```cpp
+// Example using Adafruit_INA219
+ina219.setCalibration_16V_400mA(); // Custom calibration function
+```
 
-## 4. Journalisation des Données (Data Logging)
-Enregistrer l'historique de l'agitation pour la traçabilité des expériences.
-- **Stockage :** Utilisation de la mémoire Flash interne (LittleFS) ou d'une carte SD.
-- **Export :** Téléchargement des données au format CSV via l'interface Web.
+## 2. PID Tuning (Sub-100 RPM)
+Low-speed stability is difficult due to static friction (stiction).
+- **Integral Anti-Windup:** Clamp the `integral` value to prevent it from skyrocketing when the bar is stuck.
+- **Feed-Forward:** Add a base PWM value (e.g., `PWM = Base + PID_Output`) where `Base` is the minimum PWM required to overcome friction, found during auto-calibration.
 
-## 5. Détection de Découplage Avancée par Analyse Spectrale
-- **Principe :** Analyser la gigue (jitter) du signal tachymétrique. Un barreau magnétique qui commence à vibrer avant de décrocher produit une signature fréquentielle spécifique.
-- **Action :** Réduire préventivement la vitesse de 5% dès que l'instabilité est détectée pour éviter l'arrêt complet.
+## 3. Handling PWM Aliasing
+If you are NOT using a 4-wire fan and are instead haching the 12V line with a MOSFET:
+- The INA219 will see 0V when the MOSFET is off and 12V when it is on.
+- **Solution:** Perform "Synchronized Sampling" where the current is only read when the PWM pin is HIGH, or add a 470µF-1000µF capacitor across the fan leads to smooth the current draw into a DC value.
 
-## 6. Intégration MQTT pour Laboratoire Connecté
-- **Protocole :** Publier l'état du mélangeur sur un serveur central (ex: Home Assistant ou Node-RED).
-- **Avantage :** Centraliser le monitoring de tous les équipements du labo (Stirrer, Bioreacteur, Fluo) sur un seul écran.
+## 4. UI Responsiveness
+- **OLED Throttling:** Ensure `display.display()` is called no more than 5-10 times per second. Higher rates waste I2C bandwidth and can jitter the PID loop (even on a separate core due to bus contention).
+- **Encoder Polling:** Use interrupts (as implemented in `stirrer_project.ino`) rather than polling for instant feedback.
+
+## 5. Security & Safety
+- **ESP-NOW Pairing:** Implement a "pairing mode" where the stirrer only accepts commands from a Master MAC address stored in NVS (Preferences).
+- **Serial CRC:** Always verify the CRC8 of incoming serial packets. Malformed packets can cause sudden RPM jumps.

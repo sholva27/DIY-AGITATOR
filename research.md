@@ -1,20 +1,33 @@
-# Research: DIY Magnetic Stirrer
+# Laboratory Stirrer Research & Science
 
-## 1. Fan Specifications
-- **PWM Frequency:** 25 kHz is standard.
-- **Tachometer:** Typically 2 pulses per revolution (Open-collector).
-- **Torque & Coupling:** Fan motor torque depends on the motor design and static pressure rating, not the bearing type (Ball, Maglev, or Sleeve).
+This project is designed to bridge the gap between hobbyist DIY stirrers and professional laboratory equipment (like the IKA or VELP series).
 
-## 2. Magnetic Coupling & Sensing
-- **Magnets:** Neodymium (N52) in a North-South alternating arrangement.
-- **Sensing the Bar:**
-    - **Hall Sensor:** Must be mounted **LATERALLY** (side-mounted) at the height of the stir bar. Placement directly under the container will only measure the strong drive magnets of the fan.
-    - **Optical/IR:** A more robust alternative that is immune to magnetic crosstalk. An IR reflective sensor can detect the stir bar through clear container walls.
+## 1. Scientific Requirements
+To be useful in a bioreactor or chemistry lab, a stirrer must meet these criteria:
+- **Constant Speed:** Maintain RPM regardless of liquid volume or viscosity changes.
+- **Safety:** Prevent "flyaway" stir-bars (decoupling) which can break glassware.
+- **Thermal Isolation:** The motor (fan) should not heat the sample. ESP32-S3 allows for active thermal monitoring if a DS18B20 is added.
 
-## 3. ESP32-S3 Specifics
-- **Peripherals:** Uses LEDC for PWM. Dual-core allows separating the critical PID loop (Core 1) from the UI/Display (Core 0).
-- **I2C:** Default SDA/SCL on 8/9.
+## 2. Component Selection Rationale
 
-## 4. Startup Dynamics
-- **Kickstart:** PC fans often need a high initial duty cycle to overcome static friction and inertia. A 300ms burst at 100% is implemented.
-- **Minimum Duty:** Every fan has a stall threshold (e.g., 15-20%). The firmware enforces a `MIN_PWM` to ensure reliable rotation.
+### why ESP32-S3?
+- **Hardware PWM:** High-frequency (25kHz+) prevents audible hum in the motor.
+- **Dual Core:** Isolates time-critical PID control from heavy OLED/WiFi tasks.
+- **ESP-NOW:** Low-latency communication for multi-unit bioreactor arrays.
+
+### Sensing Strategy
+- **Primary Safety (Stall):** Handled by the Fan Tachometer.
+- **Stir-Bar Stability:** Handled by a lateral Hall Effect sensor.
+- **Power Health (Logging):** Handled by the INA219 (Optional). Note: Monitoring current does **not** reliably detect decoupling, as fan aero-drag is the dominant load.
+
+## 3. Reference Material
+Inspirations for the mechanical design and magnet alignment:
+- **Open-Source Labware (University of Michigan):** Focus on 3D printed housing and magnetic coupling distances.
+- **DIY Biohacker Communities:** Use of PC fans for budget-friendly bioreactors.
+- **IKA Lab Stirrer Teardowns:** Showcasing the importance of the hall sensor for feedback loops.
+
+## 4. Hardware Optimization (Advanced)
+For professional use, consider these refinements:
+- **Magnet Balance:** Use two small neodymium magnets (N52) balanced precisely on the fan hub.
+- **Thermal Barrier:** A 3mm acrylic or glass plate between the fan and the flask to minimize heat transfer.
+- **Lateral Hall Alignment:** Mount the Hall sensor on the **side** of the flask container to detect the bar's magnetic field without interference from the fan's motor.

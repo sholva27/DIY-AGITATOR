@@ -3,16 +3,17 @@
 Voici une sélection de composants pour le projet Magnetic Stirrer, vérifiés sur **dzduino.com** et **sesdz.com**.
 
 ## 1. Microcontrôleur (ESP32-S3)
-Le S3 est très demandé. Si le modèle standard est en rupture, voici les options :
+Le S3 est idéal pour le PID haute fréquence.
 - **DZDUINO :** [Carte de développement ESP32-S3 avec écran LCD tactile](https://www.dzduino.com/carte-de-developpement-esp32-s3-avec-ecran-lcd-tactile-rond-de-1-28-pouce-taille-compacte-accelerometre-et-capteur-gyroscopique) (En stock) - *Note: Inclut déjà un écran.*
 - **DZDUINO :** [ESP32 OLED 0.96 Pouce + Batterie](https://www.dzduino.com/esp32-oled-0-96-pouce-carte-de-developpement-batterie) (En stock) - *Excellent choix "tout-en-un" car l'écran OLED est déjà soudé.*
 
 ## 2. Affichage (OLED 0.96" I2C)
 - **DZDUINO :** [Module OLED 0.96 inch 128X64](https://www.dzduino.com/module-daffichage-oled-0-96-inch-4pin-128x64-jaune-bleu) (Vérifier stock régulièrement).
 
-## 3. Capteur de Courant (INA219)
+## 3. Capteur de Courant (Optionnel - Pour le Log)
 - **DZDUINO :** [Module INA219](https://www.dzduino.com/ina219-module-de-capteur-de-courant) (Vérifier stock).
-- *Alternative :* Si introuvable, le capteur Hall **A3144E** est listé chez DZDUINO pour la détection magnétique simple.
+- *Pro Alternative :* Rechercher **INA226** (16-bit) pour une précision accrue sur les courants faibles (<200mA).
+- *Important :* Privilégier un ventilateur PC **4-fils (PWM)** pour une mesure de courant stable côté 12V.
 
 ## 4. Alimentation (Step-Down / Buck Converter)
 Il faut abaisser le 12V du ventilateur vers le 5V de l'ESP32.
@@ -25,6 +26,6 @@ Il faut abaisser le 12V du ventilateur vers le 5V de l'ESP32.
 
 ## 6. Accessoires & Outillage
 - **SESDZ :** [Pince à dénuder GSFixtop](https://www.sesdz.com/pince-a-denuder-les-fils-1-1-6-2-2-6-3-2mm-175-x-130-mm-gsfixtop-10602) (En stock).
-- **DZDUINO :** Pour les aimants néodyme et les ventilateurs PC, ces pièces sont souvent plus faciles à trouver chez les vendeurs de matériel informatique ou de réparation d'imprimantes 3D en Algérie.
+- **DZDUINO :** Pour les aimants néodyme et les ventilateurs PC (4-fils recommandés), ces pièces sont souvent disponibles chez les vendeurs de matériel informatique ou de réparation d'imprimantes 3D.
 
-**Conseil :** Les stocks varient très vite sur ces sites. N'hésitez pas à les appeler directement (Numéros disponibles sur leurs sites respectifs) pour confirmer les arrivages.
+**Conseil :** Les stocks varient très vite sur ces sites. N'hésitez pas à les appeler directement pour confirmer les arrivages.
