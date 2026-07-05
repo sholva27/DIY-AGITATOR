@@ -25,3 +25,5 @@
 - [x] **Decoupling Protection:** Auto-detect and reset when the magnet slips. (IMPLEMENTED)
 - [ ] **Sensor Fusion:** Display temperature (DS18B20) and current (INA219) data.
 - [ ] **IoT Suite:** Web Dashboard, OTA Updates, and MQTT logging.
+- [ ] **Vortex Lighting:** Integrated NeoPixel ring for visual status and lighting.
+- [ ] **Predictive Maintenance:** Vibration analysis via accelerometer to detect bearing wear.
