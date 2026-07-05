@@ -19,6 +19,9 @@ Le S3 est idéal pour le PID haute fréquence.
 Il faut abaisser le 12V du ventilateur vers le 5V de l'ESP32.
 - **DZDUINO :** [Module Step Down 6-24V vers USB/5V](https://www.dzduino.com/module-2-usb-dc-dc-step-down-6-24v) (En stock).
 - **DZDUINO :** [LM2596S DC-DC Buck Converter](https://www.dzduino.com/dc-dc-converter-module-dalimentation-réglable-step-down-module-fr) (Vérifier stock).
+- **Alternative Ultra-Compacte :** **Module S09 (Buck-Boost)**.
+    - *Avantages :* Très petite taille (19x14mm), régulation automatique (accepte 3-15V pour sortir 5V stable).
+    - *Attention :* Courant max de **600mA**. Suffisant pour l'ESP32 et l'OLED, mais trop faible pour alimenter le ventilateur lui-même (qui doit rester en direct sur le 12V).
 
 ## 5. Contrôle de Température (Bioréacteur)
 - **SESDZ :** [Contrôleur STC-3028](https://www.sesdz.com/regulateur-temperature-humidite-incubateur-STC-3028) (En stock) - *Pour réguler la température globale du bioreacteur.*
