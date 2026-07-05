@@ -45,7 +45,22 @@ Standard INA219 modules (0.1Ω shunt) are often set to a ±320mV range (3.2A max
 
 ---
 
-## 4. Alternatives: The "Pro" Choice
+## 4. Optical Alternative: IR Reflective Sensor (TCRT5000)
+
+Il est possible d'utiliser un capteur IR réflexif pour mesurer la vitesse du barreau, mais cela présente des défis spécifiques en environnement de laboratoire.
+
+### Comparaison avec le Capteur Hall (GPIO 6)
+| Caractéristique | Capteur Hall | Capteur IR (Optique) |
+| :--- | :--- | :--- |
+| **Principe** | Champ magnétique | Réflexion de lumière IR |
+| **Avantage principal** | Mesure directe du barreau à travers le verre. | Indépendant du magnétisme (ne sature pas). |
+| **Inconvénient** | Sensible au bruit magnétique du moteur. | **Critique :** Sensible à l'opacité/turbidité du liquide. |
+| **Installation** | Montage latéral (latéral). | Nécessite un marquage réfléchissant sur le barreau. |
+
+### Pourquoi le Capteur Hall est privilégié ici :
+Le capteur IR nécessite que le liquide soit parfaitement transparent. Si vous mélangez une solution opaque, colorée ou précipitée, le faisceau IR sera bloqué ou diffusé, rendant la mesure impossible. De plus, les barreaux magnétiques standards (PTFE blanc) nécessitent parfois l'ajout d'une bande noire/réfléchissante pour un signal IR propre, ce qui peut contaminer les solutions chimiques.
+
+## 5. Alternatives: The "Pro" Choice
 If you cannot find an INA219 or need even more precision:
 1.  **INA226 (Superior Alternative):** 16-bit resolution (vs 12-bit) and lower offset voltage. It features a hardware **Alert Pin** that can trigger an ESP32 interrupt on overcurrent without CPU polling.
 2.  **INA219 (Standard):** Listed in the `shopping_list_dz.md` due to high availability in Algeria (dzduino.com).
