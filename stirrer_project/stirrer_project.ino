@@ -61,6 +61,7 @@ typedef struct {
   int16_t bar_rpm;
   int16_t fan_rpm;
   uint16_t current_ma;
+  int16_t temp_c;       // Temperature in 0.1C steps (e.g. 255 = 25.5C)
   uint32_t timer_rem;
   uint8_t crc8;
 } stirrer_telemetry_t;
@@ -164,6 +165,7 @@ void sendTelemetry() {
   telem.bar_rpm = (int16_t)actualBarRPM;
   telem.fan_rpm = (int16_t)actualFanRPM;
   telem.current_ma = 0;
+  telem.temp_c = 0; // Placeholder for DS18B20
   telem.timer_rem = (uint32_t)remainingSeconds;
   telem.crc8 = calc_crc8((uint8_t*)&telem, sizeof(telem) - 1);
   if (last_master_mac[0] != 0) esp_now_send(last_master_mac, (uint8_t *)&telem, sizeof(telem));
@@ -228,10 +230,16 @@ void loop() { vTaskDelete(NULL); }
 
 void ControlTask(void *pvParameters) {
   pinMode(FAN_TACHO_PIN, INPUT_PULLUP);
-  pinMode(HALL_PIN, INPUT_PULLUP);
-  pinMode(KILL_SWITCH_PIN, OUTPUT);
   attachInterrupt(digitalPinToInterrupt(FAN_TACHO_PIN), onFanPulse, FALLING);
-  attachInterrupt(digitalPinToInterrupt(HALL_PIN), onBarPulse, FALLING);
+
+  #ifdef ENABLE_HALL
+    pinMode(HALL_PIN, INPUT_PULLUP);
+    attachInterrupt(digitalPinToInterrupt(HALL_PIN), onBarPulse, FALLING);
+  #endif
+
+  #ifdef ENABLE_KILL_SWITCH
+    pinMode(KILL_SWITCH_PIN, OUTPUT);
+  #endif
 
   #if ESP_ARDUINO_VERSION_MAJOR >= 3
     ledcAttach(FAN_PWM_PIN, 25000, 8);
@@ -260,11 +268,15 @@ void ControlTask(void *pvParameters) {
       else actualBarRPM = 0;
 
       // Crosstalk detection during startup
-      if (system_on && now - kickstartStart < 5000 && actualBarRPM > 100 && abs(actualBarRPM - actualFanRPM) < 10) {
-          bar_sensor_valid = false;
-      } else if (actualBarRPM > 50) {
-          bar_sensor_valid = true;
-      }
+      #ifdef ENABLE_HALL
+        if (system_on && now - kickstartStart < 5000 && actualBarRPM > 100 && abs(actualBarRPM - actualFanRPM) < 10) {
+            bar_sensor_valid = false;
+        } else if (actualBarRPM > 50) {
+            bar_sensor_valid = true;
+        }
+      #else
+        bar_sensor_valid = false;
+      #endif
 
       if (isCalibrating) {
          for (int i=0; i<CALIBRATION_POINTS; i++) {
@@ -285,7 +297,9 @@ void ControlTask(void *pvParameters) {
         if (remainingSeconds == 0 && timerMinutes > 0) {
             system_on = false; currentMode = TIMER_DONE;
         }
-        digitalWrite(KILL_SWITCH_PIN, HIGH);
+        #ifdef ENABLE_KILL_SWITCH
+          digitalWrite(KILL_SWITCH_PIN, HIGH);
+        #endif
         if (kickstartStart == 0) kickstartStart = now;
         if (now - kickstartStart < KICKSTART_MS) current_pwm_val = 255;
         else {
@@ -306,7 +320,9 @@ void ControlTask(void *pvParameters) {
         }
       } else {
         current_pwm_val = 0; integral = 0; kickstartStart = 0;
-        digitalWrite(KILL_SWITCH_PIN, LOW);
+        #ifdef ENABLE_KILL_SWITCH
+          digitalWrite(KILL_SWITCH_PIN, LOW);
+        #endif
       }
       #if ESP_ARDUINO_VERSION_MAJOR >= 3
         ledcWrite(FAN_PWM_PIN, (int)current_pwm_val);
@@ -370,10 +386,15 @@ void InterfaceTask(void *pvParameters) {
       system_on = false; currentMode = IDLE; targetSetpoint = 0;
     }
 
-    if (digitalRead(ENCODER_SW) == LOW && now - lastBtn > 300) {
-      unsigned long pressStart = now;
-      while(digitalRead(ENCODER_SW) == LOW && millis() - pressStart < 3000) { vTaskDelay(pdMS_TO_TICKS(10)); }
-      unsigned long duration = millis() - pressStart;
+    static unsigned long pressStart = 0;
+    static bool buttonWasDown = false;
+    bool buttonIsDown = (digitalRead(ENCODER_SW) == LOW);
+
+    if (buttonIsDown && !buttonWasDown && now - lastBtn > 300) {
+      pressStart = now;
+      buttonWasDown = true;
+    } else if (!buttonIsDown && buttonWasDown) {
+      unsigned long duration = now - pressStart;
       if (duration >= 3000) {
          isCalibrating = true;
       } else if (duration >= 1000) {
@@ -388,6 +409,7 @@ void InterfaceTask(void *pvParameters) {
          if (system_on && timerMinutes > 0) remainingSeconds = timerMinutes * 60;
          if (currentMode == TIMER_DONE) currentMode = LOCAL;
       }
+      buttonWasDown = false;
       lastBtn = now;
     }
 

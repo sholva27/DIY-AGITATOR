@@ -28,6 +28,7 @@ typedef struct {
   int16_t bar_rpm;      // Real bar RPM
   int16_t fan_rpm;      // Internal fan RPM
   uint16_t current_ma;  // Placeholder (INA219)
+  int16_t temp_c;       // Temperature in 0.1C steps (e.g. 255 = 25.5C)
   uint32_t timer_rem;   // Remaining seconds
   uint8_t crc8;
 } stirrer_telemetry_t;
@@ -38,5 +39,5 @@ typedef struct {
 In `REMOTE_LOCKED` mode, the stirrer expects a command/heartbeat every 5 seconds. If communication is lost, it will perform a safety shutdown (system_on = false).
 
 ## 3. Communication Hardware
-- **RS-485 (Optional):** Uses GPIO 6 (RX) and 7 (TX) with a TTL-to-485 transceiver.
+- **Lien Bioréacteur (Serial):** Uses GPIO 4 (RX) and 5 (TX). Compatible with TTL levels.
 - **ESP-NOW:** Peer-to-peer 2.4GHz communication. Ensure both devices are on the same WiFi channel.
