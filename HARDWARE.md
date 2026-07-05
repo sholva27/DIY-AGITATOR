@@ -14,6 +14,15 @@
 | **Buzzer** | GPIO 15 | Active buzzer for alarms |
 | **RGB LED (R,G,B)** | GPIO 16,17,18 | Common Anode. **220Ω series resistors req.** |
 
+## 4-Wire Fan Control Logic
+
+Standard 4-wire PC fans are used for precise speed control and feedback.
+- **PWM Control:** The speed is regulated via a **25kHz** high-frequency PWM signal on GPIO 14. This frequency is within the standard Intel specification for PC fans to avoid audible "whining" noise.
+- **Speed Feedback:** The tachometer signal (GPIO 13) provides real-time RPM data (typically 2 pulses per revolution).
+- **Kill Switch (GPIO 7):** This is a critical safety and control feature.
+    - **Total Stop:** Many 4-wire fans have an internal "minimum floor" and will continue to spin slowly even at 0% PWM. The Kill Switch cuts the 12V rail via a MOSFET to ensure a 0 RPM absolute stop.
+    - **Safety Fail-safe:** Some fans default to 100% speed if the PWM signal is lost or disconnected. The Kill Switch provides a hardware-level override to shut down the motor regardless of the PWM state.
+
 ## Power Supply Specifications
 
 The system requires a **Regulated 12V DC Switching Power Supply**.

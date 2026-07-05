@@ -27,9 +27,12 @@ Le câblage des entrées/sorties logiques doit respecter les broches suivantes :
 Le système utilise une alimentation **Regulée 12V DC (Switching)**.
 
 ### Architecture de puissance :
-1.  **12V Direct :** Alimente le ventilateur PC.
-2.  **Buck Converter (LM2596) :** Abaisse le 12V vers 5V pour l'ESP32-S3.
+1.  **12V via Kill Switch (MOSFET) :** Alimente le ventilateur PC. Cette ligne est physiquement coupée en mode OFF pour assurer l'arrêt total.
+2.  **Buck Converter (LM2596) :** Abaisse le 12V permanent vers 5V pour l'ESP32-S3.
 3.  **Masse Commune (GND) :** Toutes les masses (Alim 12V, Buck, ESP32, Modules) doivent être interconnectées.
+
+### Note sur le ventilateur 4 fils :
+Sur un ventilateur 4 fils, le 12V reste normalement présent en permanence et le contrôle se fait par le signal PWM. Cependant, beaucoup de ventilateurs conservent un régime minimal même à 0% de PWM. Le **Kill Switch** (piloté par le GPIO 7) permet de couper totalement l'alimentation 12V du ventilateur, garantissant un arrêt complet (0 RPM) et servant de sécurité en cas de perte du signal de commande.
 
 ### Dimensionnement de l'alimentation :
 - **Logique :** L'ESP32-S3 et les modules consomment environ 0.3A en pic (Comms WiFi).
